@@ -14,7 +14,7 @@ load_dotenv()
 
 # Logging setup
 logger = logging.getLogger("ChainlinkJobManager")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.DEBUG)  # Changed from INFO to DEBUG
 
 # Define consistent log format
 log_format = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
@@ -91,36 +91,76 @@ def save_open_incidents(incidents):
     except Exception as e:
         logger.error(f"Error saving incidents file: {e}")
 
-def track_incident(service, network, job_id):
-    """Add job to open incidents tracking"""
+def track_incident(service, network, job_id, error_msg=None):
+    """Add job to open incidents tracking with error message"""
     incidents = load_open_incidents()
     key = f"{service}_{network}"
-    if key not in incidents:
-        incidents[key] = []
-    if job_id not in incidents[key]:
-        incidents[key].append(job_id)
+    
+    # Check if this is a new incident or existing one
+    is_new_incident = True
+    
+    # Handle transitioning from old list format to new dict format
+    if key in incidents:
+        # Convert from old list format if needed
+        if isinstance(incidents[key], list):
+            temp_dict = {}
+            for old_job_id in incidents[key]:
+                temp_dict[old_job_id] = {
+                    "error": None,
+                    "first_seen": time.time(),
+                    "last_seen": time.time()
+                }
+            incidents[key] = temp_dict
+            
+        # Now check if this job ID is already tracked
+        if job_id in incidents[key]:
+            is_new_incident = False
+    else:
+        incidents[key] = {}
+        
+    # Store the error message with the incident
+    incidents[key][job_id] = {
+        "error": error_msg,
+        "first_seen": incidents[key].get(job_id, {}).get("first_seen", time.time()),
+        "last_seen": time.time()
+    }
+    
     save_open_incidents(incidents)
+    return is_new_incident
 
 def remove_incident(service, network, job_id):
     """Remove job from open incidents tracking"""
     incidents = load_open_incidents()
     key = f"{service}_{network}"
+    
     if key in incidents and job_id in incidents[key]:
-        incidents[key].remove(job_id)
+        incidents[key].pop(job_id)
         if not incidents[key]:  # Remove key if no more incidents
             incidents.pop(key)
         save_open_incidents(incidents)
 
 def authenticate(session, node_url, password):
     session_endpoint = f"{node_url}/sessions"
-    auth_response = session.post(session_endpoint, json={"email": EMAIL, "password": password}, verify=False)
+    try:
+        auth_response = session.post(
+            session_endpoint, 
+            json={"email": EMAIL, "password": password}, 
+            verify=False,
+            timeout=30  # 30 second timeout
+        )
 
-    if auth_response.status_code != 200:
-        logger.error(f"Authentication failed for {node_url}")
+        if auth_response.status_code != 200:
+            logger.error(f"Authentication failed for {node_url}")
+            return None
+
+        logger.info(f"Authentication successful for {node_url}")
+        return session
+    except requests.exceptions.Timeout:
+        logger.error(f"Authentication request timed out for {node_url}")
         return None
-
-    logger.info(f"Authentication successful for {node_url}")
-    return session
+    except Exception as e:
+        logger.error(f"Authentication error for {node_url}: {str(e)}")
+        return None
 
 def get_all_feeds_managers(session, node_url):
     graphql_endpoint = f"{node_url}/query"
@@ -134,16 +174,28 @@ def get_all_feeds_managers(session, node_url):
         }
     }
     """
-    response = session.post(graphql_endpoint, json={"query": query}, verify=False)
-    data = response.json()
-    
-    if "errors" in data:
-        logger.error(f"GraphQL Query Error on {node_url}:")
-        logger.error(json.dumps(data["errors"], indent=2))
-        return []
+    try:
+        response = session.post(
+            graphql_endpoint, 
+            json={"query": query}, 
+            verify=False,
+            timeout=30  # 30 second timeout
+        )
+        data = response.json()
         
-    feeds_managers = data.get("data", {}).get("feedsManagers", {}).get("results", [])
-    return feeds_managers
+        if "errors" in data:
+            logger.error(f"GraphQL Query Error on {node_url}:")
+            logger.error(json.dumps(data["errors"], indent=2))
+            return []
+            
+        feeds_managers = data.get("data", {}).get("feedsManagers", {}).get("results", [])
+        return feeds_managers
+    except requests.exceptions.Timeout:
+        logger.error(f"Request timed out when fetching feeds managers from {node_url}")
+        return []
+    except Exception as e:
+        logger.error(f"Error fetching feeds managers from {node_url}: {str(e)}")
+        return []
 
 def fetch_jobs(session, node_url, feeds_manager_id):
     graphql_endpoint = f"{node_url}/query"
@@ -165,14 +217,26 @@ def fetch_jobs(session, node_url, feeds_manager_id):
     }
     """
     variables = {"id": str(feeds_manager_id)}
-    response = session.post(graphql_endpoint, json={"query": query, "variables": variables}, verify=False)
-    data = response.json()
-    
-    if "errors" in data:
-        logger.error(f"GraphQL Error on {node_url}: {data['errors']}")
-        return []
+    try:
+        response = session.post(
+            graphql_endpoint, 
+            json={"query": query, "variables": variables}, 
+            verify=False,
+            timeout=30  # 30 second timeout
+        )
+        data = response.json()
         
-    return data.get("data", {}).get("feedsManager", {}).get("jobProposals", [])
+        if "errors" in data:
+            logger.error(f"GraphQL Error on {node_url}: {data['errors']}")
+            return []
+            
+        return data.get("data", {}).get("feedsManager", {}).get("jobProposals", [])
+    except requests.exceptions.Timeout:
+        logger.error(f"Request timed out when fetching jobs from {node_url}")
+        return []
+    except Exception as e:
+        logger.error(f"Error fetching jobs from {node_url}: {str(e)}")
+        return []
 
 def get_jobs_to_approve(jobs):
     pending_jobs, updated_jobs = [], []
@@ -220,47 +284,75 @@ def approve_jobs(session, node_url, jobs_to_approve, service, network):
     """
     approved_jobs = []
     failed_jobs = []
+    new_failures = []
     
     for job_id, job in jobs_to_approve:
         try:
             logger.info(f"Approving job ID: {job_id} ({job['name']})")
-            response = session.post(graphql_endpoint, 
-                                  json={"query": mutation, "variables": {"id": job_id, "force": True}}, 
-                                  verify=False)
+            response = session.post(
+                graphql_endpoint, 
+                json={"query": mutation, "variables": {"id": job_id, "force": True}}, 
+                verify=False,
+                timeout=30
+            )
             result = response.json()
             if "errors" in result:
                 error_msg = f"{job['name']}: {result['errors']}"
                 logger.error(f"Failed to approve job {job_id}: {error_msg}")
                 failed_jobs.append((job_id, job, error_msg))
-                # Track the incident
-                track_incident(service, network, job['id'])
+                
+                # Track the incident and check if it's new
+                is_new = track_incident(service, network, job['id'], error_msg)
+                if is_new:
+                    new_failures.append((job_id, job, error_msg))
+                    
                 send_pagerduty_alert(f"job_fail_{service}_{network}_{job['id']}", 
                                    f"Job approval error on {service} {network}", 
                                    {"error": error_msg, "node": node_url, "job_id": job['id']})
                 continue
+                
             logger.info(f"Approved job ID: {job_id} ({job['name']})")
             approved_jobs.append(job)
-            # Successfully approved - remove from tracking if it was there
+            
+            # Successfully approved - remove from tracking
             remove_incident(service, network, job['id'])
             send_pagerduty_alert(f"job_fail_{service}_{network}_{job['id']}", 
                                f"Job approval resolved on {service} {network}", 
                                {"job_id": job['id'], "status": "APPROVED"}, 
                                action="resolve")
+        except requests.exceptions.Timeout:
+            error_msg = f"Request timed out after 30 seconds when approving job {job_id}"
+            logger.error(error_msg)
+            failed_jobs.append((job_id, job, error_msg))
+            
+            # Track the incident and check if it's new
+            is_new = track_incident(service, network, job['id'], error_msg)
+            if is_new:
+                new_failures.append((job_id, job, error_msg))
+                
+            send_pagerduty_alert(f"job_fail_{service}_{network}_{job['id']}", 
+                               f"Job approval error on {service} {network}", 
+                               {"error": error_msg, "node": node_url, "job_id": job['id']})
+            continue
         except Exception as e:
             error_msg = f"Failed to approve job {job_id}: {str(e)}"
             logger.error(error_msg)
             failed_jobs.append((job_id, job, str(e)))
-            # Track the incident
-            track_incident(service, network, job['id'])
+            
+            # Track the incident and check if it's new
+            is_new = track_incident(service, network, job['id'], error_msg)
+            if is_new:
+                new_failures.append((job_id, job, error_msg))
+                
             send_pagerduty_alert(f"job_fail_{service}_{network}_{job['id']}", 
                                f"Job approval error on {service} {network}", 
                                {"error": str(e), "node": node_url, "job_id": job['id']})
             continue
             
-    # Send grouped Slack alert for all failures
-    if failed_jobs:
+    # Send Slack alert only for new failures
+    if new_failures:
         failure_messages = []
-        for job_id, job, error in failed_jobs:
+        for job_id, job, error in new_failures:
             failure_messages.append(f"Job {job['id']}: {job['name']}\nerror: {error}")
         failure_message = f"@channel :warning: Approval failed for {service} {network}:\n```" + "\n\n".join(failure_messages) + "```"
         send_slack_alert(failure_message)
@@ -276,8 +368,13 @@ def approve_jobs(session, node_url, jobs_to_approve, service, network):
 def send_slack_alert(message):
     if SLACK_WEBHOOK:
         logger.debug(f"Sending Slack alert: {message}")
-        response = requests.post(SLACK_WEBHOOK, json={"text": message})
-        logger.debug(f"Slack response code: {response.status_code}")
+        try:
+            response = requests.post(SLACK_WEBHOOK, json={"text": message}, timeout=30)
+            logger.debug(f"Slack response code: {response.status_code}")
+        except requests.exceptions.Timeout:
+            logger.error("Slack alert timed out")
+        except Exception as e:
+            logger.error(f"Error sending Slack alert: {str(e)}")
 
 def send_pagerduty_alert(alert_key, summary, details, action="trigger"):
     if PAGERDUTY_INTEGRATION_KEY:
@@ -293,13 +390,22 @@ def send_pagerduty_alert(alert_key, summary, details, action="trigger"):
             }
         }
         logger.debug(f"Sending PagerDuty {action} alert for {alert_key}: {summary}")
-        response = requests.post("https://events.pagerduty.com/v2/enqueue", json=payload)
-        logger.debug(f"PagerDuty response code: {response.status_code}")
+        try:
+            response = requests.post(
+                "https://events.pagerduty.com/v2/enqueue", 
+                json=payload,
+                timeout=30  # 30 second timeout
+            )
+            logger.debug(f"PagerDuty response code: {response.status_code}")
+        except requests.exceptions.Timeout:
+            logger.error(f"PagerDuty alert timed out for {alert_key}")
+        except Exception as e:
+            logger.error(f"Error sending PagerDuty alert: {str(e)}")
 
 if __name__ == "__main__":
     logger.info("=" * 60)
     logger.info("Starting Chainlink Job Manager")
-    logger.info("=" * 60 + "\n")
+    logger.info("=" * 60)
     
     hosts = load_hosts()
     for service, network, url, password in hosts:
@@ -336,4 +442,4 @@ if __name__ == "__main__":
                     
     logger.info("=" * 60)
     logger.info("Chainlink Job Manager Complete")
-    logger.info("=" * 60 + "\n")
+    logger.info("=" * 60)

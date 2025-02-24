@@ -119,11 +119,16 @@ def track_incident(service, network, job_id, error_msg=None):
         incidents[key] = {}
         
     # Store the error message with the incident
-    incidents[key][job_id] = {
-        "error": error_msg,
-        "first_seen": incidents[key].get(job_id, {}).get("first_seen", time.time()),
-        "last_seen": time.time()
-    }
+    if is_new_incident or job_id not in incidents[key]:
+        incidents[key][job_id] = {
+            "error": error_msg,
+            "first_seen": time.time(),
+            "last_seen": time.time()
+        }
+    else:
+        # Update existing incident
+        incidents[key][job_id]["error"] = error_msg
+        incidents[key][job_id]["last_seen"] = time.time()
     
     save_open_incidents(incidents)
     return is_new_incident
@@ -354,7 +359,7 @@ def approve_jobs(session, node_url, jobs_to_approve, service, network):
         failure_messages = []
         for job_id, job, error in new_failures:
             failure_messages.append(f"Job {job['id']}: {job['name']}\nerror: {error}")
-        failure_message = f"@channel :warning: Approval failed for {service} {network}:\n```" + "\n\n".join(failure_messages) + "```"
+        failure_message = f"<!channel> :warning: Approval failed for {service} {network}:\n```" + "\n\n".join(failure_messages) + "```"
         send_slack_alert(failure_message)
         
     # Send Slack alert for approved jobs

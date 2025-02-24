@@ -1,0 +1,24 @@
+[Unit]
+Description=Chainlink Job Scheduler
+After=network.target
+
+[Service]
+# Full path to the venv python interpreter
+ExecStart=<root path>/cl-jobs/venv/bin/python3 <root path>/cl-jobs/cl_job_scheduler.py
+
+# Set the working directory
+WorkingDirectory=<root path>/cl-jobs
+
+# User to run the service (use a non-root user)
+User=<user>
+
+# Minimal environment setup
+Environment=PATH=<root path>/cl-jobs/venv/bin
+Environment=VIRTUAL_ENV=<root path>/cl-jobs/venv
+
+# Restart policy
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

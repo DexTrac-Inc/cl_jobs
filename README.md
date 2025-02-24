@@ -89,6 +89,7 @@ Logs are written to multiple locations:
 - Incident tracking with automatic resolution
 
 ## Directory Structure
+
 ├── cl_job_scheduler.py # Scheduler script
 ├── cl_jobs.py # Main job management script
 ├── cl_hosts.json # Node configuration

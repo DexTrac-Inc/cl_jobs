@@ -89,13 +89,14 @@ Logs are written to multiple locations:
 - Incident tracking with automatic resolution
 
 ## Directory Structure
-
+```
 ├── cl_job_scheduler.py # Scheduler script
 ├── cl_jobs.py # Main job management script
 ├── cl_hosts.json # Node configuration
 ├── .env # Environment variables
 ├── requirements.txt # Python dependencies
 └── cl_job_scheduler.service # Systemd service file
+```
 
 ## Error Handling
 

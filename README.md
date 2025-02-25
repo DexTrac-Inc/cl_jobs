@@ -8,6 +8,7 @@ An automated system for managing and approving Chainlink node jobs. This applica
 - Configurable execution schedule (runs at 00, 15, 30, and 45 minutes past each hour)
 - Job cancellation using feed IDs
 - Job reapproval for cancelled jobs
+- Job listing and status reporting
 - Slack notifications for job approval status
 - PagerDuty integration for error tracking and alerts
 
@@ -76,15 +77,58 @@ The application runs in multiple modes:
    python cl_jobs.py
    ```
 
-3. Cancel Jobs:
+3. List Jobs:
+   ```bash
+   python cl_list_jobs.py --service bootstrap --node ethereum
+   ```
+
+4. Cancel Jobs:
    ```bash
    python cl_delete_jobs.py --service bootstrap --node ethereum --feed-ids-file feed_ids.txt
    ```
 
-4. Reapprove Cancelled Jobs:
+5. Reapprove Cancelled Jobs:
    ```bash
    python cl_reapprove_jobs.py --service bootstrap --node ethereum --feed-ids-file feed_ids.txt
    ```
+
+### Job Listing
+
+The `cl_list_jobs.py` script allows you to list and filter jobs on a node:
+
+```bash
+python cl_list_jobs.py --service SERVICE --node NODE [--status STATUS] [--has-updates] [--format FORMAT] [--output FILE] [--config CONFIG_FILE]
+```
+
+Parameters:
+- `--service`: Service name from cl_hosts.json (e.g., bootstrap, ocr)
+- `--node`: Node name from cl_hosts.json (e.g., arbitrum, ethereum)
+- `--status`: Optional filter for job status (e.g., APPROVED, CANCELLED, PENDING)
+- `--has-updates`: Optional flag to show only jobs with pending updates
+- `--format`: Output format: 'table' (default) or 'json'
+- `--output`: Optional path to save output as JSON
+- `--config`: Optional path to the config file (defaults to cl_hosts.json)
+
+Example:
+```bash
+# List all jobs on a node in table format
+python cl_list_jobs.py --service bootstrap --node ethereum
+
+# List only cancelled jobs
+python cl_list_jobs.py --service bootstrap --node ethereum --status CANCELLED
+
+# List jobs with pending updates and save to file
+python cl_list_jobs.py --service bootstrap --node ethereum --has-updates --output jobs.json
+
+# Get JSON output for further processing
+python cl_list_jobs.py --service bootstrap --node ethereum --format json
+```
+
+The script provides:
+- Summary of jobs by status
+- Detailed table of jobs with their IDs, names, status, and update information
+- Option to save results to a JSON file for further processing
+- Filtering capabilities to focus on specific job types
 
 ### Job Cancellation
 
@@ -158,7 +202,7 @@ The script will:
 4. In dry-run mode, show jobs that would be reapproved
 5. In execute mode, reapprove the identified jobs
 
-Both the cancellation and reapproval scripts use connection retry logic to handle large batches of jobs and temporary network issues.
+All scripts use connection retry logic to handle large batches of jobs and temporary network issues.
 
 ## Logging
 
@@ -178,6 +222,7 @@ Logs are written to multiple locations:
 ```
 ├── cl_job_scheduler.py # Scheduler script
 ├── cl_jobs.py # Main job management script
+├── cl_list_jobs.py # Job listing script
 ├── cl_delete_jobs.py # Job cancellation script
 ├── cl_reapprove_jobs.py # Job reapproval script
 ├── cl_hosts.json # Node configuration

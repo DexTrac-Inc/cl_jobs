@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import json
 import requests
@@ -45,13 +46,20 @@ def retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10):
     return decorator
 
 # Parse command line arguments
-parser = argparse.ArgumentParser(description='Cancel Chainlink jobs matching specific feed IDs')
+parser = argparse.ArgumentParser(description='Cancel Chainlink jobs matching specific patterns')
 parser.add_argument('--service', required=True, help='Service name (e.g. bootstrap, ocr)')
 parser.add_argument('--node', required=True, help='Node name (e.g. arbitrum, ethereum)')
 parser.add_argument('--execute', action='store_true', help='Execute cancellations (default: dry run)')
 parser.add_argument('--config', default='cl_hosts.json', help='Path to config file (default: cl_hosts.json)')
-parser.add_argument('--feed-ids-file', required=True, help='Path to file containing feed IDs (one per line)')
+parser.add_argument('--feed-ids-file', help='Path to file containing feed IDs to cancel (one per line)')
+parser.add_argument('--name-pattern', help='Cancel jobs with names matching this pattern (e.g. "cron-capabilities")')
+parser.add_argument('--job-id', help='Cancel job with specific ID')
 args = parser.parse_args()
+
+# Validate arguments - need at least one way to identify jobs
+if not args.feed_ids_file and not args.name_pattern and not args.job_id:
+    print("❌ Error: You must specify either --feed-ids-file, --name-pattern, or --job-id")
+    exit(1)
 
 # Environment Variables
 EMAIL = os.getenv("EMAIL")
@@ -89,25 +97,27 @@ EXECUTE = args.execute
 
 # Load Feed IDs from file
 def load_feed_ids(feed_ids_file):
-    # Check if feed_ids_file is provided
     if not feed_ids_file:
-        print("❌ Error: Feed IDs file is required")
-        exit(1)
+        return []
     
     try:
         # Extract feed IDs from the file
         feed_ids = []
+        non_hex_patterns = []
+        
         with open(feed_ids_file, 'r') as file:
             for line in file:
-                # Clean up the line and extract 0x... addresses
                 line = line.strip()
+                if not line or line.startswith('#'):
+                    continue  # Skip empty lines and comments
+                
                 # Look for 0x pattern followed by hexadecimal characters
                 matches = re.findall(r'(0x[0-9a-fA-F]+)', line)
-                feed_ids.extend(matches)
-        
-        if not feed_ids:
-            print(f"❌ Error: No valid feed IDs found in {feed_ids_file}")
-            exit(1)
+                if matches:
+                    feed_ids.extend(matches)
+                else:
+                    # If no hex pattern, use the line as a regular text pattern
+                    non_hex_patterns.append(line)
         
         # Check for duplicates
         feed_id_count = {}
@@ -123,15 +133,31 @@ def load_feed_ids(feed_ids_file):
         
         # Use only unique feed IDs
         unique_feed_ids = list(feed_id_count.keys())
-        print(f"✅ Loaded {len(unique_feed_ids)} unique feed IDs from {feed_ids_file}")
-        return unique_feed_ids
+        
+        # Summary
+        if unique_feed_ids or non_hex_patterns:
+            if unique_feed_ids:
+                print(f"✅ Loaded {len(unique_feed_ids)} unique feed IDs from {feed_ids_file}")
+            if non_hex_patterns:
+                print(f"✅ Loaded {len(non_hex_patterns)} non-hex patterns from {feed_ids_file}")
+            return unique_feed_ids, non_hex_patterns
+        else:
+            print(f"⚠️ Warning: No valid identifiers found in {feed_ids_file}")
+            return [], []
         
     except Exception as e:
         print(f"❌ Error reading feed IDs file: {e}")
         exit(1)
 
-# Load the feed IDs
-FEED_IDS_TO_CANCEL = load_feed_ids(args.feed_ids_file)
+# Load the feed IDs and patterns
+FEED_IDS_TO_CANCEL = []
+NON_HEX_PATTERNS = []
+
+if args.feed_ids_file:
+    FEED_IDS_TO_CANCEL, NON_HEX_PATTERNS = load_feed_ids(args.feed_ids_file)
+
+if args.name_pattern:
+    NON_HEX_PATTERNS.append(args.name_pattern)
 
 # Authenticate with Chainlink Node
 @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
@@ -233,32 +259,69 @@ def fetch_jobs_to_cancel(session, node_url, feeds_manager_id):
     return data.get("data", {}).get("feedsManager", {}).get("jobProposals", [])
 
 # Identify Jobs to Cancel
-def get_jobs_to_cancel(jobs, feed_ids):
+def get_jobs_to_cancel(jobs):
     jobs_to_cancel = []
     matched_feed_ids = set()
+    matched_patterns = set()
+    matched_job_ids = set()
     
     # Convert all feed IDs to lowercase for case-insensitive comparison
-    feed_ids_lower = [feed_id.lower() for feed_id in feed_ids]
+    feed_ids_lower = [feed_id.lower() for feed_id in FEED_IDS_TO_CANCEL]
     
     for job in jobs:
-        if job["status"] == "APPROVED":
-            job_name_lower = job["name"].lower()
+        if job["status"] != "APPROVED":
+            continue
+            
+        job_id = job.get("id", "")
+        job_name = job.get("name", "")
+        job_name_lower = job_name.lower()
+        match_reason = None
+        matched_identifier = None
+        
+        # Check for specific job ID match
+        if args.job_id and job_id == args.job_id:
+            match_reason = f"job ID {job_id}"
+            matched_identifier = job_id
+            matched_job_ids.add(job_id)
+        
+        # Check for feed ID matches
+        elif FEED_IDS_TO_CANCEL:
             for i, feed_id_lower in enumerate(feed_ids_lower):
                 if feed_id_lower in job_name_lower:
-                    jobs_to_cancel.append((job["latestSpec"]["id"], job["name"], feed_ids[i]))
-                    matched_feed_ids.add(feed_ids[i])
+                    match_reason = f"feed ID {FEED_IDS_TO_CANCEL[i]}"
+                    matched_identifier = FEED_IDS_TO_CANCEL[i]
+                    matched_feed_ids.add(matched_identifier)
+                    break
+        
+        # Check for non-hex pattern matches if no feed ID matched
+        if not match_reason and NON_HEX_PATTERNS:
+            for pattern in NON_HEX_PATTERNS:
+                if pattern.lower() in job_name_lower:
+                    match_reason = f"pattern '{pattern}'"
+                    matched_identifier = pattern
+                    matched_patterns.add(pattern)
+                    break
+        
+        # If we found a match, add the job to our cancel list
+        if match_reason:
+            latest_spec_id = job.get("latestSpec", {}).get("id")
+            if latest_spec_id:
+                jobs_to_cancel.append((latest_spec_id, job_name, matched_identifier, match_reason))
+            else:
+                print(f"⚠️ Warning: Job '{job_name}' has no latest spec ID, skipping")
     
     # Sort jobs by name alphabetically
     jobs_to_cancel.sort(key=lambda x: x[1])
     
-    # Identify unmatched feed IDs
-    unmatched_feed_ids = [feed_id for feed_id in feed_ids if feed_id not in matched_feed_ids]
+    # Identify unmatched feed IDs and patterns
+    unmatched_feed_ids = [feed_id for feed_id in FEED_IDS_TO_CANCEL if feed_id not in matched_feed_ids]
+    unmatched_patterns = [pattern for pattern in NON_HEX_PATTERNS if pattern not in matched_patterns]
     
-    return jobs_to_cancel, unmatched_feed_ids
+    return jobs_to_cancel, unmatched_feed_ids, unmatched_patterns
 
 # Cancel a single job with retry logic
 @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
-def cancel_job(session, node_url, job_id, job_name, feed_id):
+def cancel_job(session, node_url, job_id, job_name, identifier):
     graphql_endpoint = f"{node_url}/query"
 
     mutation = """
@@ -291,9 +354,9 @@ def cancel_jobs(session, node_url, jobs_to_cancel):
     successful = 0
     failed = 0
     
-    for job_id, job_name, feed_id in jobs_to_cancel:
+    for job_id, job_name, identifier, match_reason in jobs_to_cancel:
         try:
-            if cancel_job(session, node_url, job_id, job_name, feed_id):
+            if cancel_job(session, node_url, job_id, job_name, identifier):
                 successful += 1
             else:
                 failed += 1
@@ -307,7 +370,17 @@ def cancel_jobs(session, node_url, jobs_to_cancel):
 if __name__ == "__main__":
     print("\n" + "=" * 60)
     print(f"🔍 Checking jobs on {args.service.upper()} {args.node.upper()} ({NODE_URL})")
-    print(f"🔍 Using {len(FEED_IDS_TO_CANCEL)} feed IDs for job matching")
+    
+    # Display criteria
+    criteria = []
+    if args.job_id:
+        criteria.append(f"job ID: {args.job_id}")
+    if FEED_IDS_TO_CANCEL:
+        criteria.append(f"{len(FEED_IDS_TO_CANCEL)} feed IDs")
+    if NON_HEX_PATTERNS:
+        criteria.append(f"{len(NON_HEX_PATTERNS)} pattern(s): {', '.join(NON_HEX_PATTERNS)}")
+    
+    print(f"🔍 Cancellation criteria: {' and '.join(criteria)}")
 
     session = requests.Session()
     session = authenticate(session, NODE_URL, PASSWORD)
@@ -320,18 +393,33 @@ if __name__ == "__main__":
         exit(0)
 
     found_jobs = False
+    all_jobs_to_cancel = []
     all_unmatched_feed_ids = []
+    all_unmatched_patterns = []
     total_jobs = 0
     total_successful = 0
     total_failed = 0
+    
+    # Track all matched patterns globally across feed managers
+    all_matched_patterns = set()
+    all_matched_feed_ids = set()
     
     for fm in feeds_managers:
         print(f"🔍 Fetching job proposals for {fm['name']}")
 
         jobs = fetch_jobs_to_cancel(session, NODE_URL, fm["id"])
-        jobs_to_cancel, unmatched_feed_ids = get_jobs_to_cancel(jobs, FEED_IDS_TO_CANCEL)
-        all_unmatched_feed_ids.extend(unmatched_feed_ids)
-
+        jobs_to_cancel, unmatched_feed_ids, unmatched_patterns = get_jobs_to_cancel(jobs)
+        
+        # Add to the overall list of jobs to cancel
+        all_jobs_to_cancel.extend(jobs_to_cancel)
+        
+        # Track all matched identifiers globally
+        for _, _, identifier, match_reason in jobs_to_cancel:
+            if "feed ID" in match_reason:
+                all_matched_feed_ids.add(identifier)
+            elif "pattern" in match_reason:
+                all_matched_patterns.add(identifier)
+        
         if not jobs_to_cancel:
             print(f"✅ No cancellations needed for {fm['name']}")
             continue
@@ -343,8 +431,8 @@ if __name__ == "__main__":
         # Just list the jobs if not in execute mode
         if not EXECUTE:
             print("📃 Jobs that would be cancelled (dry run):")
-            for job_id, job_name, feed_id in jobs_to_cancel:
-                print(f"  - {job_name} (ID: {job_id})")
+            for job_id, job_name, identifier, match_reason in jobs_to_cancel:
+                print(f"  - {job_name} (ID: {job_id}, Match: {match_reason})")
         else:
             # Add a progress counter
             print(f"⏳ Starting cancellation of {len(jobs_to_cancel)} jobs...")
@@ -352,17 +440,23 @@ if __name__ == "__main__":
             total_successful += successful
             total_failed += failed
     
-    # De-duplicate unmatched feed IDs (remove duplicates across feed managers)
-    all_unmatched_feed_ids = list(set(all_unmatched_feed_ids))
+    # Compute truly unmatched identifiers globally
+    all_unmatched_feed_ids = [feed_id for feed_id in FEED_IDS_TO_CANCEL if feed_id not in all_matched_feed_ids]
+    all_unmatched_patterns = [pattern for pattern in NON_HEX_PATTERNS if pattern not in all_matched_patterns]
     
     # Report on unmatched feed IDs
     if all_unmatched_feed_ids:
         print("\n" + "=" * 60)
         print(f"⚠️ Found {len(all_unmatched_feed_ids)} feed IDs with no matching jobs:")
-        
-        # Show all unmatched feed IDs (no limit)
         for feed_id in sorted(all_unmatched_feed_ids):
             print(f"  - {feed_id}")
+    
+    # Report on unmatched patterns
+    if all_unmatched_patterns:
+        print("\n" + "=" * 60)
+        print(f"⚠️ Found {len(all_unmatched_patterns)} patterns with no matching jobs:")
+        for pattern in sorted(all_unmatched_patterns):
+            print(f"  - {pattern}")
     
     # Print summary
     if EXECUTE and found_jobs:

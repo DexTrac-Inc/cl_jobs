@@ -45,10 +45,10 @@ def retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10):
     return decorator
 
 # Parse command line arguments
-parser = argparse.ArgumentParser(description='Cancel Chainlink jobs matching specific feed IDs')
+parser = argparse.ArgumentParser(description='Reapprove canceled Chainlink jobs matching specific feed IDs')
 parser.add_argument('--service', required=True, help='Service name (e.g. bootstrap, ocr)')
 parser.add_argument('--node', required=True, help='Node name (e.g. arbitrum, ethereum)')
-parser.add_argument('--execute', action='store_true', help='Execute cancellations (default: dry run)')
+parser.add_argument('--execute', action='store_true', help='Execute reapprovals (default: dry run)')
 parser.add_argument('--config', default='cl_hosts.json', help='Path to config file (default: cl_hosts.json)')
 parser.add_argument('--feed-ids-file', required=True, help='Path to file containing feed IDs (one per line)')
 args = parser.parse_args()
@@ -131,7 +131,7 @@ def load_feed_ids(feed_ids_file):
         exit(1)
 
 # Load the feed IDs
-FEED_IDS_TO_CANCEL = load_feed_ids(args.feed_ids_file)
+FEED_IDS_TO_REAPPROVE = load_feed_ids(args.feed_ids_file)
 
 # Authenticate with Chainlink Node
 @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
@@ -188,7 +188,7 @@ def get_all_feeds_managers(session, node_url):
 
 # Fetch Jobs from Feeds Manager
 @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
-def fetch_jobs_to_cancel(session, node_url, feeds_manager_id):
+def fetch_jobs_to_reapprove(session, node_url, feeds_manager_id):
     graphql_endpoint = f"{node_url}/query"
 
     query = """
@@ -202,8 +202,8 @@ def fetch_jobs_to_cancel(session, node_url, feeds_manager_id):
                         status
                         pendingUpdate
                         latestSpec {
-                            createdAt
                             id
+                            status
                         }
                     }
                 }
@@ -232,73 +232,87 @@ def fetch_jobs_to_cancel(session, node_url, feeds_manager_id):
 
     return data.get("data", {}).get("feedsManager", {}).get("jobProposals", [])
 
-# Identify Jobs to Cancel
-def get_jobs_to_cancel(jobs, feed_ids):
-    jobs_to_cancel = []
+# Identify Jobs to Reapprove
+def get_jobs_to_reapprove(jobs, feed_ids):
+    jobs_to_reapprove = []
     matched_feed_ids = set()
     
     # Convert all feed IDs to lowercase for case-insensitive comparison
     feed_ids_lower = [feed_id.lower() for feed_id in feed_ids]
     
     for job in jobs:
-        if job["status"] == "APPROVED":
+        # Check for "CANCELLED" or "CANCELED" status (handle different spellings)
+        job_status = job.get("status", "").upper()
+        if job_status in ["CANCELLED", "CANCELED"]:
             job_name_lower = job["name"].lower()
             for i, feed_id_lower in enumerate(feed_ids_lower):
                 if feed_id_lower in job_name_lower:
-                    jobs_to_cancel.append((job["latestSpec"]["id"], job["name"], feed_ids[i]))
-                    matched_feed_ids.add(feed_ids[i])
+                    # We need the latest spec ID - this is what we'll try to approve
+                    latest_spec_id = job.get("latestSpec", {}).get("id")
+                    if latest_spec_id:
+                        jobs_to_reapprove.append((latest_spec_id, job["name"], feed_ids[i], job["id"]))
+                        matched_feed_ids.add(feed_ids[i])
+                    else:
+                        print(f"⚠️ Warning: Job '{job['name']}' has no latest spec ID")
     
     # Sort jobs by name alphabetically
-    jobs_to_cancel.sort(key=lambda x: x[1])
+    jobs_to_reapprove.sort(key=lambda x: x[1])
     
     # Identify unmatched feed IDs
     unmatched_feed_ids = [feed_id for feed_id in feed_ids if feed_id not in matched_feed_ids]
     
-    return jobs_to_cancel, unmatched_feed_ids
+    return jobs_to_reapprove, unmatched_feed_ids
 
-# Cancel a single job with retry logic
+# Reapprove a single job
 @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
-def cancel_job(session, node_url, job_id, job_name, feed_id):
+def reapprove_job(session, node_url, spec_id, job_name, feed_id, job_id):
     graphql_endpoint = f"{node_url}/query"
 
     mutation = """
-    mutation CancelJobProposalSpec($id: ID!) {
-        cancelJobProposalSpec(id: $id) {
-            __typename
+    mutation ApproveJobProposalSpec($id: ID!, $force: Boolean) {
+        approveJobProposalSpec(id: $id, force: $force) {
+            ... on ApproveJobProposalSpecSuccess {
+                spec {
+                    id
+                }
+            }
+            ... on NotFoundError {
+                message
+            }
         }
     }
     """
 
-    print(f"⏳ Cancelling job ID: {job_id} ({job_name})")
+    print(f"⏳ Reapproving job spec ID: {spec_id} for job proposal ID: {job_id} ({job_name})")
 
     response = session.post(
         graphql_endpoint,
-        json={"query": mutation, "variables": {"id": job_id}},
+        json={"query": mutation, "variables": {"id": spec_id, "force": True}},
         verify=False
     )
 
     result = response.json()
     if "errors" in result:
-        print(f"❌ Failed to cancel job ID: {job_id}")
+        print(f"❌ Failed to reapprove job spec ID: {spec_id}")
         print(json.dumps(result, indent=2))
         return False
     else:
-        print(f"✅ Cancelled job ID: {job_id}")
+        print(f"✅ Reapproved job spec ID: {spec_id} for job ({job_name})")
         return True
 
-# Cancel Jobs with proper error handling
-def cancel_jobs(session, node_url, jobs_to_cancel):
+# Reapprove Jobs with retry logic
+def reapprove_jobs(session, node_url, jobs_to_reapprove):
     successful = 0
     failed = 0
     
-    for job_id, job_name, feed_id in jobs_to_cancel:
+    for spec_id, job_name, feed_id, job_id in jobs_to_reapprove:
         try:
-            if cancel_job(session, node_url, job_id, job_name, feed_id):
+            if reapprove_job(session, node_url, spec_id, job_name, feed_id, job_id):
                 successful += 1
             else:
                 failed += 1
         except Exception as e:
-            print(f"❌ Exception when cancelling job {job_id}: {e}")
+            print(f"❌ Exception when reapproving job {spec_id}: {e}")
             failed += 1
     
     return successful, failed
@@ -306,8 +320,8 @@ def cancel_jobs(session, node_url, jobs_to_cancel):
 # Main Execution
 if __name__ == "__main__":
     print("\n" + "=" * 60)
-    print(f"🔍 Checking jobs on {args.service.upper()} {args.node.upper()} ({NODE_URL})")
-    print(f"🔍 Using {len(FEED_IDS_TO_CANCEL)} feed IDs for job matching")
+    print(f"🔍 Checking for canceled jobs on {args.service.upper()} {args.node.upper()} ({NODE_URL})")
+    print(f"🔍 Using {len(FEED_IDS_TO_REAPPROVE)} feed IDs for job matching")
 
     session = requests.Session()
     session = authenticate(session, NODE_URL, PASSWORD)
@@ -328,27 +342,27 @@ if __name__ == "__main__":
     for fm in feeds_managers:
         print(f"🔍 Fetching job proposals for {fm['name']}")
 
-        jobs = fetch_jobs_to_cancel(session, NODE_URL, fm["id"])
-        jobs_to_cancel, unmatched_feed_ids = get_jobs_to_cancel(jobs, FEED_IDS_TO_CANCEL)
+        jobs = fetch_jobs_to_reapprove(session, NODE_URL, fm["id"])
+        jobs_to_reapprove, unmatched_feed_ids = get_jobs_to_reapprove(jobs, FEED_IDS_TO_REAPPROVE)
         all_unmatched_feed_ids.extend(unmatched_feed_ids)
 
-        if not jobs_to_cancel:
-            print(f"✅ No cancellations needed for {fm['name']}")
+        if not jobs_to_reapprove:
+            print(f"✅ No jobs to reapprove for {fm['name']}")
             continue
         
         found_jobs = True
-        print(f"📋 Found {len(jobs_to_cancel)} jobs to cancel for {fm['name']}")
-        total_jobs += len(jobs_to_cancel)
+        print(f"📋 Found {len(jobs_to_reapprove)} jobs to reapprove for {fm['name']}")
+        total_jobs += len(jobs_to_reapprove)
         
         # Just list the jobs if not in execute mode
         if not EXECUTE:
-            print("📃 Jobs that would be cancelled (dry run):")
-            for job_id, job_name, feed_id in jobs_to_cancel:
-                print(f"  - {job_name} (ID: {job_id})")
+            print("📃 Jobs that would be reapproved (dry run):")
+            for spec_id, job_name, feed_id, job_id in jobs_to_reapprove:
+                print(f"  - {job_name} (Job ID: {job_id}, Spec ID: {spec_id})")
         else:
             # Add a progress counter
-            print(f"⏳ Starting cancellation of {len(jobs_to_cancel)} jobs...")
-            successful, failed = cancel_jobs(session, NODE_URL, jobs_to_cancel)
+            print(f"⏳ Starting reapproval of {len(jobs_to_reapprove)} jobs...")
+            successful, failed = reapprove_jobs(session, NODE_URL, jobs_to_reapprove)
             total_successful += successful
             total_failed += failed
     
@@ -358,7 +372,7 @@ if __name__ == "__main__":
     # Report on unmatched feed IDs
     if all_unmatched_feed_ids:
         print("\n" + "=" * 60)
-        print(f"⚠️ Found {len(all_unmatched_feed_ids)} feed IDs with no matching jobs:")
+        print(f"⚠️ Found {len(all_unmatched_feed_ids)} feed IDs with no matching canceled jobs:")
         
         # Show all unmatched feed IDs (no limit)
         for feed_id in sorted(all_unmatched_feed_ids):
@@ -367,12 +381,12 @@ if __name__ == "__main__":
     # Print summary
     if EXECUTE and found_jobs:
         print("\n" + "=" * 60)
-        print(f"📊 Job Cancellation Summary:")
+        print(f"📊 Job Reapproval Summary:")
         print(f"  Total jobs processed: {total_jobs}")
-        print(f"  Successfully cancelled: {total_successful}")
-        print(f"  Failed to cancel: {total_failed}")
+        print(f"  Successfully reapproved: {total_successful}")
+        print(f"  Failed to reapprove: {total_failed}")
             
     if not found_jobs:
-        print("✅ No matching jobs found for cancellation")
+        print("✅ No matching jobs found for reapproval")
     elif not EXECUTE:
-        print("\n⚠️ Dry run completed. Use --execute flag to perform actual cancellations.")
+        print("\n⚠️ Dry run completed. Use --execute flag to perform actual reapprovals.")

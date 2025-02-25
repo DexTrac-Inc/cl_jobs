@@ -7,6 +7,7 @@ An automated system for managing and approving Chainlink node jobs. This applica
 - Automated job approval across multiple Chainlink nodes
 - Configurable execution schedule (runs at 00, 15, 30, and 45 minutes past each hour)
 - Job cancellation using feed IDs
+- Job reapproval for cancelled jobs
 - Slack notifications for job approval status
 - PagerDuty integration for error tracking and alerts
 
@@ -80,6 +81,11 @@ The application runs in multiple modes:
    python cl_delete_jobs.py --service bootstrap --node ethereum --feed-ids-file feed_ids.txt
    ```
 
+4. Reapprove Cancelled Jobs:
+   ```bash
+   python cl_reapprove_jobs.py --service bootstrap --node ethereum --feed-ids-file feed_ids.txt
+   ```
+
 ### Job Cancellation
 
 The `cl_delete_jobs.py` script allows you to cancel specific jobs based on their feed IDs:
@@ -116,6 +122,44 @@ The script will:
 4. In dry-run mode, show jobs that would be cancelled
 5. In execute mode, cancel the identified jobs
 
+### Job Reapproval
+
+The `cl_reapprove_jobs.py` script allows you to reapprove cancelled jobs based on their feed IDs:
+
+```bash
+python cl_reapprove_jobs.py --service SERVICE --node NODE --feed-ids-file FEED_IDS_FILE [--execute] [--config CONFIG_FILE]
+```
+
+Parameters:
+- `--service`: Service name from cl_hosts.json (e.g., bootstrap, ocr)
+- `--node`: Node name from cl_hosts.json (e.g., arbitrum, ethereum)
+- `--feed-ids-file`: Path to a file containing feed IDs to reapprove
+- `--execute`: Optional flag to actually perform reapprovals (without this flag, runs in dry-run mode)
+- `--config`: Optional path to the config file (defaults to cl_hosts.json)
+
+Feed IDs file format:
+- Same as for the cancellation script (one ID per line recommended)
+- The script extracts all 0x addresses from each line
+- Duplicate feed IDs will be detected and reported
+
+Example:
+```bash
+# Dry-run mode (shows what would be reapproved without making changes)
+python cl_reapprove_jobs.py --service bootstrap --node ethereum --feed-ids-file feeds_to_reapprove.txt
+
+# Execute mode (performs actual reapprovals)
+python cl_reapprove_jobs.py --service bootstrap --node ethereum --feed-ids-file feeds_to_reapprove.txt --execute
+```
+
+The script will:
+1. Connect to the specified Chainlink node
+2. Find cancelled jobs that match the feed IDs in the file
+3. Report any feed IDs that couldn't be matched to cancelled jobs
+4. In dry-run mode, show jobs that would be reapproved
+5. In execute mode, reapprove the identified jobs
+
+Both the cancellation and reapproval scripts use connection retry logic to handle large batches of jobs and temporary network issues.
+
 ## Logging
 
 Logs are written to multiple locations:
@@ -135,6 +179,7 @@ Logs are written to multiple locations:
 ├── cl_job_scheduler.py # Scheduler script
 ├── cl_jobs.py # Main job management script
 ├── cl_delete_jobs.py # Job cancellation script
+├── cl_reapprove_jobs.py # Job reapproval script
 ├── cl_hosts.json # Node configuration
 ├── .env # Environment variables
 ├── requirements.txt # Python dependencies
@@ -148,6 +193,7 @@ The application includes comprehensive error handling:
 - Network connectivity issues
 - Job approval failures
 - Job cancellation failures
+- Job reapproval failures
 - Configuration errors
 
 Each error is logged and, when configured, triggers appropriate notifications through Slack and PagerDuty.

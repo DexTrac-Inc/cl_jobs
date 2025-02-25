@@ -6,6 +6,7 @@ An automated system for managing and approving Chainlink node jobs. This applica
 
 - Automated job approval across multiple Chainlink nodes
 - Configurable execution schedule (runs at 00, 15, 30, and 45 minutes past each hour)
+- Job cancellation using feed IDs
 - Slack notifications for job approval status
 - PagerDuty integration for error tracking and alerts
 
@@ -62,7 +63,7 @@ The configuration file supports multiple chainlink nodes. Each entry requires:
 
 ## Usage
 
-The application runs in two modes:
+The application runs in multiple modes:
 
 1. Scheduler Mode:
    ```bash
@@ -73,6 +74,47 @@ The application runs in two modes:
    ```bash
    python cl_jobs.py
    ```
+
+3. Cancel Jobs:
+   ```bash
+   python cl_delete_jobs.py --service bootstrap --node ethereum --feed-ids-file feed_ids.txt
+   ```
+
+### Job Cancellation
+
+The `cl_delete_jobs.py` script allows you to cancel specific jobs based on their feed IDs:
+
+```bash
+python cl_delete_jobs.py --service SERVICE --node NODE --feed-ids-file FEED_IDS_FILE [--execute] [--config CONFIG_FILE]
+```
+
+Parameters:
+- `--service`: Service name from cl_hosts.json (e.g., bootstrap, ocr)
+- `--node`: Node name from cl_hosts.json (e.g., arbitrum, ethereum)
+- `--feed-ids-file`: Path to a file containing feed IDs to cancel
+- `--execute`: Optional flag to actually perform cancellations (without this flag, runs in dry-run mode)
+- `--config`: Optional path to the config file (defaults to cl_hosts.json)
+
+Feed IDs file format:
+- One feed ID per line is recommended
+- The script will extract all 0x addresses from each line
+- Duplicate feed IDs will be detected and reported
+
+Example:
+```bash
+# Dry-run mode (shows what would be cancelled without making changes)
+python cl_delete_jobs.py --service bootstrap --node ethereum --feed-ids-file feeds_to_cancel.txt
+
+# Execute mode (performs actual cancellations)
+python cl_delete_jobs.py --service bootstrap --node ethereum --feed-ids-file feeds_to_cancel.txt --execute
+```
+
+The script will:
+1. Connect to the specified Chainlink node
+2. Find jobs that match the feed IDs in the file
+3. Report any feed IDs that couldn't be matched to jobs
+4. In dry-run mode, show jobs that would be cancelled
+5. In execute mode, cancel the identified jobs
 
 ## Logging
 
@@ -92,6 +134,7 @@ Logs are written to multiple locations:
 ```
 ├── cl_job_scheduler.py # Scheduler script
 ├── cl_jobs.py # Main job management script
+├── cl_delete_jobs.py # Job cancellation script
 ├── cl_hosts.json # Node configuration
 ├── .env # Environment variables
 ├── requirements.txt # Python dependencies
@@ -104,6 +147,7 @@ The application includes comprehensive error handling:
 - Authentication failures
 - Network connectivity issues
 - Job approval failures
+- Job cancellation failures
 - Configuration errors
 
 Each error is logged and, when configured, triggers appropriate notifications through Slack and PagerDuty.

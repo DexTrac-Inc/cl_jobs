@@ -36,7 +36,7 @@ An automated system for managing and approving Chainlink node jobs. This applica
 2. Copy the example configuration files and update them with your settings:
    ```bash
    cp .env.example .env
-   cp cl_hosts.json.example cl_hosts.json
+   cp cl_host.json.example cl_hosts.json
    ```
 
 3. Update the configuration files:
@@ -95,6 +95,59 @@ Common options for all commands:
 - `--service`: Service name from cl_hosts.json (e.g., bootstrap, ocr)
 - `--node`: Node name from cl_hosts.json (e.g., arbitrum, ethereum)
 - `--config`: Path to config file (default: cl_hosts.json)
+
+### Automated Job Approval
+
+The `cl_jobs.py` script handles automatic job checking and approval:
+
+```bash
+# Run with default settings (for automation)
+python cl_jobs.py
+
+# Run manually without sending notifications
+python cl_jobs.py --suppress-notifications
+
+# Force execution regardless of environment variable setting
+python cl_jobs.py --execute
+
+# Combine options
+python cl_jobs.py --execute --suppress-notifications
+```
+
+Features:
+- Automatically approves pending jobs across all configured nodes
+- Tracks job approval failures and resolves them when fixed
+- Sends formatted Slack notifications (can be suppressed for manual runs)
+- PagerDuty integration for error tracking and incident management
+- Shares core components with the job manager while remaining a separate tool
+
+The script is designed to be run by the scheduler but can also be run manually with appropriate options. When run by the scheduler, notifications are enabled by default since they're important for automated operations.
+
+Slack notifications are formatted clearly:
+- ✅ Success notifications show approved jobs grouped by service/network
+- ⚠️ Failure notifications include detailed error information with @channel alerts
+
+The script leverages the ChainlinkAPI class and utility functions from the job manager components but operates independently as a standalone tool.
+
+### Job Scheduler
+
+The scheduler provides automated execution of the job approval process:
+
+```bash
+# Start the scheduler service
+python cl_job_scheduler.py
+```
+
+The scheduler:
+- Runs every 15 minutes (at 00, 15, 30, and 45 minutes past each hour)
+- Executes the `cl_jobs.py` script automatically
+- Ensures regular checking and approval of pending jobs
+- Can be configured as a systemd service for persistent operation
+
+To set up as a system service:
+1. Edit the `cl_job_scheduler.service` file with your installation paths
+2. Copy to `/etc/systemd/system/`
+3. Enable and start with `systemctl` commands
 
 ### Job Listing
 
@@ -193,19 +246,19 @@ The command will:
 
 ### Job Reapproval
 
-Reapprove cancelled jobs based on their feed IDs:
+Reapprove cancelled jobs based on their feed IDs or patterns:
 
 ```bash
 python cl_jobs_manager.py reapprove --service SERVICE --node NODE --feed-ids-file FEED_IDS_FILE [--execute]
 ```
 
 Options:
-- `--feed-ids-file`: Path to file containing feed IDs to reapprove (required)
+- `--feed-ids-file`: Path to file containing feed IDs or patterns to reapprove (required)
 - `--execute`: Flag to perform actual reapprovals (without this flag, runs in dry-run mode)
 
 Feed IDs file format:
 - Same as for the cancellation command (one ID per line recommended)
-- The command extracts all 0x addresses from each line
+- The command extracts all 0x addresses from each line as well as non-hex patterns
 - Duplicate feed IDs will be detected and reported
 
 Example:
@@ -219,8 +272,8 @@ python cl_jobs_manager.py reapprove --service bootstrap --node ethereum --feed-i
 
 The command will:
 1. Connect to the specified Chainlink node
-2. Find cancelled jobs that match the feed IDs in the file
-3. Report any feed IDs that couldn't be matched to cancelled jobs
+2. Find cancelled jobs that match the feed IDs or patterns in the file
+3. Report any feed IDs or patterns that couldn't be matched to cancelled jobs
 4. In dry-run mode, show jobs that would be reapproved
 5. In execute mode, reapprove the identified jobs
 

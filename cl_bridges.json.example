@@ -1,0 +1,25 @@
+{
+    "bridges": {
+        "group_1": {
+            "bridge-example-1": "https://0.0.0.0",
+            "bridge-example-2": "https://0.0.0.0",
+            "bridge-example-3": "https://0.0.0.0",
+            "bridge-example-4": "https://0.0.0.0",
+            "bridge-example-5": "https://0.0.0.0"
+        },
+        "group_2": {
+            "bridge-example-1": "https://1.0.0.0",
+            "bridge-example-2": "https://1.0.0.0",
+            "bridge-example-3": "https://1.0.0.0",
+            "bridge-example-4": "https://1.0.0.0",
+            "bridge-example-5": "https://1.0.0.0"
+        },
+        "group_3": {
+            "bridge-example-1": "https://2.0.0.0",
+            "bridge-example-2": "https://2.0.0.0",
+            "bridge-example-3": "https://2.0.0.0",
+            "bridge-example-4": "https://2.0.0.0",
+            "bridge-example-5": "https://2.0.0.0"
+        }
+    }
+}

@@ -171,3 +171,4 @@ cython_debug/
 .pypirc
 cl_host.json
 cl_hosts.json
+cl_bridges.json

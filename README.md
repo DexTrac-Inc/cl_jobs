@@ -1,6 +1,6 @@
 # Chainlink Job Manager
 
-An automated system for managing and approving Chainlink node jobs. This application includes a job scheduler that runs every 15 minutes and a unified job manager that handles listing, cancellation, and reapproval of jobs.
+An automated system for managing and approving Chainlink node jobs and bridges. This application includes a job scheduler that runs every 15 minutes, a unified job manager that handles listing, cancellation, and reapproval of jobs, and bridge management functionality.
 
 ## Disclaimer
 
@@ -8,12 +8,13 @@ An automated system for managing and approving Chainlink node jobs. This applica
 
 ## Features
 
-- Unified command interface for job management
+- Unified command interface for job and bridge management
 - Automated job approval across multiple Chainlink nodes
 - Configurable execution schedule (runs at 00, 15, 30, and 45 minutes past each hour)
 - Job cancellation using feed IDs or name patterns
 - Job reapproval for cancelled jobs
 - Job listing and status reporting
+- Bridge management (list, create, update, delete, batch)
 - Slack notifications for job approval status
 - PagerDuty integration for error tracking and alerts
 
@@ -36,12 +37,14 @@ An automated system for managing and approving Chainlink node jobs. This applica
 2. Copy the example configuration files and update them with your settings:
    ```bash
    cp .env.example .env
-   cp cl_host.json.example cl_hosts.json
+   cp cl_hosts.json.example cl_hosts.json
+   cp cl_bridges.json.example cl_bridges.json
    ```
 
 3. Update the configuration files:
    - `.env`: Add your credentials and integration keys
-   - `cl_hosts.json`: Configure your Chainlink node endpoints (add or remove services and nodes as needed)
+   - `cl_hosts.json`: Configure your Chainlink node endpoints and bridge groups
+   - `cl_bridges.json`: Define your bridge groups
 
 4. Set up the systemd service:
    - Copy `cl_job_scheduler.service` to `/etc/systemd/system/`
@@ -67,6 +70,41 @@ An automated system for managing and approving Chainlink node jobs. This applica
 The configuration file supports multiple chainlink nodes. Each entry requires:
 - `url`: Node endpoint URL
 - `password`: Index of the password to use (corresponds to PASSWORD_X in .env)
+- `bridge_group`: Bridge group to use for this node
+
+Example:
+```json
+{
+  "services": {
+    "bootstrap": {
+      "ethereum": { 
+        "url": "https://0.0.0.0", 
+        "password": 0, 
+        "bridge_group": "group_1" 
+      }
+    }
+  }
+}
+```
+
+### Bridge Configuration (cl_bridges.json)
+
+The bridges configuration file defines groups of bridges with their URLs:
+
+```json
+{
+    "bridges": {
+        "group_1": {
+            "bridge-example-1": "https://example1.adapters.cinternal.com",
+            "bridge-example-2": "https://example2.adapters.cinternal.com"
+        },
+        "group_2": {
+            "bridge-example-1": "https://alt1.adapters.cinternal.com",
+            "bridge-example-2": "https://alt2.adapters.cinternal.com"
+        }
+    }
+}
+```
 
 ## Usage
 
@@ -90,6 +128,7 @@ Available commands for manual management:
 - `list`: List and filter jobs
 - `cancel`: Cancel jobs based on criteria
 - `reapprove`: Reapprove cancelled jobs
+- `bridge`: Manage Chainlink bridges
 
 Common options for all commands:
 - `--service`: Service name from cl_hosts.json (e.g., bootstrap, ocr)
@@ -277,7 +316,64 @@ The command will:
 4. In dry-run mode, show jobs that would be reapproved
 5. In execute mode, reapprove the identified jobs
 
-All operations use connection retry logic to handle large batches of jobs and temporary network issues.
+### Bridge Management
+
+Manage external adapter bridges for Chainlink nodes:
+
+```bash
+# List all bridges on a node
+python cl_jobs_manager.py bridge list --service SERVICE --node NODE
+
+# Create or update a single bridge
+python cl_jobs_manager.py bridge create --service SERVICE --node NODE --name BRIDGE_NAME --url BRIDGE_URL
+
+# Delete a bridge
+python cl_jobs_manager.py bridge delete --service SERVICE --node NODE --name BRIDGE_NAME
+
+# Batch create/update bridges from a configured bridge group
+python cl_jobs_manager.py bridge batch --service SERVICE --node NODE [--group GROUP_NAME]
+```
+
+Bridge commands:
+- `list`: Show all bridges on a node
+- `create`: Create or update a single bridge
+- `delete`: Delete a specific bridge
+- `batch`: Process multiple bridges from a configured bridge group
+
+The batch command uses a JSON configuration file (`cl_bridges.json`) for defining bridge groups:
+
+```json
+{
+    "bridges": {
+        "group_1": {
+            "bridge-example-1": "https://example1.adapters.cinternal.com",
+            "bridge-example-2": "https://example2.adapters.cinternal.com"
+        },
+        "group_2": {
+            "bridge-example-1": "https://alt1.adapters.cinternal.com",
+            "bridge-example-2": "https://alt2.adapters.cinternal.com"
+        }
+    }
+}
+```
+
+You can specify which bridge group a node should use by adding a `bridge_group` field to the node's configuration in `cl_hosts.json`:
+
+```json
+{
+  "services": {
+    "bootstrap": {
+      "ethereum": { 
+        "url": "https://0.0.0.0", 
+        "password": 0, 
+        "bridge_group": "group_1" 
+      }
+    }
+  }
+}
+```
+
+This approach allows different nodes to use different bridge configurations while maintaining central management of bridge definitions.
 
 ## Logging
 
@@ -302,7 +398,8 @@ Logs are written to multiple locations:
 │   ├── __init__.py
 │   ├── list_cmd.py        # List command functionality
 │   ├── cancel_cmd.py      # Cancel command functionality
-│   └── reapprove_cmd.py   # Reapprove command functionality
+│   ├── reapprove_cmd.py   # Reapprove command functionality
+│   └── bridge_cmd.py      # Bridge management functionality
 ├── core/                  # Core functionality
 │   ├── __init__.py
 │   └── chainlink_api.py   # Chainlink API interaction
@@ -310,6 +407,7 @@ Logs are written to multiple locations:
 │   ├── __init__.py
 │   └── helpers.py         # Shared helper functions
 ├── cl_hosts.json          # Node configuration
+├── cl_bridges.json        # Bridge groups configuration
 ├── .env                   # Environment variables
 ├── requirements.txt       # Python dependencies
 └── cl_job_scheduler.service # Systemd service file
@@ -323,6 +421,7 @@ The application includes comprehensive error handling:
 - Job approval failures
 - Job cancellation failures
 - Job reapproval failures
+- Bridge management failures
 - Configuration errors
 
 Each error is logged and, when configured, triggers appropriate notifications through Slack and PagerDuty.
@@ -336,6 +435,8 @@ Each error is logged and, when configured, triggers appropriate notifications th
 3. **Use specific patterns**: When using pattern matching, be as specific as possible to avoid unintended matches.
 
 4. **Review the logs**: Always review the logs after operations to ensure everything executed as expected.
+
+5. **Organize bridges into logical groups**: Create bridge groups based on function or environment to make management easier.
 
 ## Contributing
 

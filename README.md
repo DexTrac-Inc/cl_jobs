@@ -441,3 +441,62 @@ Each error is logged and, when configured, triggers appropriate notifications th
 ## Contributing
 
 Please submit issues and pull requests for any improvements or bug fixes.
+
+# Multiple Bridge Groups Support
+
+The system now supports configuring multiple bridge groups per node. This allows for better organization and flexibility in bridge management.
+
+### Node Configuration with Multiple Bridge Groups (cl_hosts.json)
+
+Nodes can now be configured with either a single bridge group or multiple bridge groups:
+
+```json
+{
+  "services": {
+    "bootstrap": {
+      "ethereum": { 
+        "url": "https://ethereum-node-url:6688", 
+        "password": 0, 
+        "bridge_groups": ["default_adapters", "ethereum_bridges"] 
+      },
+      "polygon": { 
+        "url": "https://polygon-node-url:6688", 
+        "password": 0, 
+        "bridge_group": "default_adapters" 
+      }
+    }
+  }
+}
+```
+
+With `bridge_groups`, a node can use bridges from multiple groups. This allows for:
+- Sharing common bridges across nodes
+- Adding specialized bridges for specific networks
+- Better organization of bridge definitions
+
+The system will automatically combine all bridges from the specified groups when creating bridges for jobs.
+
+### Bridge Configuration (cl_bridges.json)
+
+The bridge configuration file remains unchanged, organizing bridges into logical groups:
+
+```json
+{
+    "bridges": {
+        "default_adapters": {
+            "bridge-coinmarketcap": "https://adapters.domain.com/coinmarketcap",
+            "bridge-coingecko": "https://adapters.domain.com/coingecko"
+        },
+        "ethereum_bridges": {
+            "bridge-etherscan": "https://adapters.domain.com/etherscan"
+        }
+    }
+}
+```
+
+### Automatic Bridge Creation
+
+The system now attempts to create missing bridges from all configured bridge groups:
+1. If a job requires bridges that don't exist on the node, the system attempts to create them
+2. Bridges are searched for in all of the node's configured bridge groups
+3. If a required bridge isn't in any of the node's bridge groups, detailed diagnostic information is provided

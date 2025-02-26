@@ -1,12 +1,25 @@
 {
   "services": {
     "bootstrap": {
-      "arbitrum": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
+      "ethereum": {
+        "url": "https://ethereum-node-url:6688",
+        "password": 0,
+        "bridge_groups": ["default_adapters", "ethereum_bridges"]
+      },
+      "arbitrum": {
+        "url": "https://arbitrum-node-url:6688",
+        "password": 0,
+        "bridge_groups": ["default_adapters", "arbitrum_bridges"]
+      },
+      "polygon": {
+        "url": "https://polygon-node-url:6688",
+        "password": 0,
+        "bridge_group": "default_adapters"
+      },
       "avalanche": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "base": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "bsc": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "celo": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
-      "ethereum": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "fantom": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "gnosis": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "hedera": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
@@ -16,7 +29,6 @@
       "metis": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "moonbeam": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "optimism": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
-      "polygon": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "ronin": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "scroll": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "solana": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
@@ -29,12 +41,16 @@
       "zksyc": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" }
     },
     "ocr": {
+      "ethereum": {
+        "url": "https://ethereum-ocr-url:6688",
+        "password": 1,
+        "bridge_groups": ["default_adapters", "price_feeds"]
+      },
       "arbitrum": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "avalanche": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "base": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "bsc": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "celo": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
-      "ethereum": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "fantom": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "gnosis": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },
       "hedera": { "url": "https://0.0.0.0", "password": 0, "bridge_group": "group_1" },

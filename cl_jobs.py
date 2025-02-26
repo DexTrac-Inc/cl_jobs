@@ -13,6 +13,7 @@ import time
 # Import components from the job manager
 from core.chainlink_api import ChainlinkAPI
 from utils.helpers import load_config, retry_on_connection_error
+from utils.bridge_ops import create_missing_bridges, check_bridge_config
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -237,90 +238,155 @@ def check_open_incidents(chainlink_api, service, network):
                     logger.info(f"Resolved incident for job {job['id']} on {service} {network}")
 
 def approve_jobs(chainlink_api, jobs_to_approve, service, network, suppress_notifications=False):
-    """
-    Approve pending jobs
-    
-    Parameters:
-    - chainlink_api: Initialized ChainlinkAPI instance
-    - jobs_to_approve: List of tuples (spec_id, job) to approve
-    - service: Service name
-    - network: Network name
-    - suppress_notifications: If True, don't send Slack/PagerDuty alerts
-    
-    Returns:
-    - Tuple of (approved_jobs, failed_jobs)
-    """
+    """Approve the specified jobs"""
     approved_jobs = []
     failed_jobs = []
+    
+    for spec_id, job in jobs_to_approve:
+        job_name = job.get('name', 'Unknown')
+        job_id = job.get('id', 'Unknown')
+        
+        try:
+            logger.info(f"Approving job: {job_name} (Spec ID: {spec_id})")
+            
+            success = chainlink_api.approve_job(spec_id)
+            
+            if success:
+                logger.info(f"✅ Successfully approved {job_name}")
+                approved_jobs.append(job)
+            else:
+                # Get the detailed error from the last response
+                error_response = getattr(chainlink_api.session, '_last_response', None)
+                error_text = ""
+                if error_response and hasattr(error_response, 'text'):
+                    error_text = error_response.text
+                
+                # Store the complete error for notifications
+                failed_jobs.append({
+                    'service': service,
+                    'node': network,
+                    'job_id': job_id,
+                    'job_name': job_name,
+                    'error': f"Failed to approve job spec {spec_id}: {error_text}"  # Include the full error text
+                })
+                
+                # Process bridge errors
+                if "bridge check: not all bridges exist" in error_text:
+                    logger.warning(f"Bridge error detected. Attempting to create missing bridges...")
+                    
+                    # Log the complete error for debugging
+                    logger.debug(f"Full error message: {error_text}")
+                    
+                    # Attempt to create missing bridges
+                    if create_missing_bridges(chainlink_api, error_text, service, network, log_to_console=True):
+                        logger.info(f"Missing bridges created successfully. Retrying approval...")
+                        
+                        # Retry approval
+                        retry_success = chainlink_api.approve_job(spec_id)
+                        if retry_success:
+                            logger.info(f"✅ Successfully approved {job_name} after adding missing bridges")
+                            approved_jobs.append(job)
+                            continue
+                        else:
+                            logger.error(f"❌ Failed to approve {job_name} even after adding bridges")
+                    else:
+                        logger.error(f"❌ Failed to create missing bridges for {job_name}")
+                    
+                    # Check if bridges exist in other groups
+                    missing_bridges, other_group_bridges = check_bridge_config(error_text, service, network, log_to_console=True)
+                    
+                    if missing_bridges:
+                        logger.error(f"These bridges are not configured in any group: {', '.join(missing_bridges)}")
+                        
+                    if other_group_bridges:
+                        logger.error("Some bridges exist in other bridge groups:")
+                        for bridge, groups in other_group_bridges:
+                            logger.error(f"  - {bridge} found in groups: {', '.join(groups)}")
+            
+            # If we get here, the job approval failed
+            logger.error(f"❌ Failed to approve {job_name}")
+            failed_jobs.append(job)
+            
+        except Exception as e:
+            logger.error(f"❌ Exception when approving {job_name}: {str(e)}")
+            failed_jobs.append(job)
+    
+    # Send notifications if not suppressed
+    if not suppress_notifications:
+        if approved_jobs:
+            send_approval_notification(service, network, approved_jobs)
+        
+        if failed_jobs:
+            send_failure_notification(service, network, failed_jobs)
+            
+    return approved_jobs, failed_jobs
+
+def send_approval_notification(service, network, approved_jobs):
+    """
+    Send notification for successfully approved jobs
+    
+    Parameters:
+    - service: Service name
+    - network: Network name
+    - approved_jobs: List of successfully approved jobs
+    """
+    # Format job names as a list with the service/network as header
+    approved_job_names = "\n".join(job.get('name', 'Unknown') for job in approved_jobs)
+    success_message = f"✅ Approved jobs for {service} {network}:\n```{approved_job_names}```"
+    send_slack_alert(success_message)
+    
+    # Resolve any existing incidents for these jobs
+    for job in approved_jobs:
+        job_id = job.get('id', 'Unknown')
+        # Successfully approved - remove from tracking
+        remove_incident(service, network, job_id)
+        send_pagerduty_alert(
+            f"job_fail_{service}_{network}_{job_id}", 
+            f"Job approval resolved on {service} {network}", 
+            {"job_id": job_id, "status": "APPROVED"}, 
+            action="resolve"
+        )
+
+def send_failure_notification(service, network, failed_jobs):
+    """
+    Send notification for jobs that failed to approve
+    
+    Parameters:
+    - service: Service name
+    - network: Network name
+    - failed_jobs: List of jobs that failed to approve
+    """
     new_failures = []
     
-    for job_id, job in jobs_to_approve:
-        try:
-            logger.info(f"Approving job ID: {job_id} ({job['name']})")
+    # Track incidents and identify new failures
+    for job in failed_jobs:
+        job_id = job.get('id', 'Unknown')
+        job_name = job.get('name', 'Unknown')
+        error_msg = f"Failed to approve job {job_id} ({job_name})"
+        
+        # Track the incident and check if it's new
+        is_new = track_incident(service, network, job_id, error_msg)
+        if is_new:
+            new_failures.append(job)
             
-            if chainlink_api.approve_job(job_id):
-                logger.info(f"Approved job ID: {job_id} ({job['name']})")
-                approved_jobs.append(job)
-                
-                # Successfully approved - remove from tracking
-                remove_incident(service, network, job['id'])
-                if not suppress_notifications:
-                    send_pagerduty_alert(f"job_fail_{service}_{network}_{job['id']}", 
-                                       f"Job approval resolved on {service} {network}", 
-                                       {"job_id": job['id'], "status": "APPROVED"}, 
-                                       action="resolve")
-            else:
-                error_msg = f"Failed to approve job spec {job_id}"
-                logger.error(error_msg)
-                failed_jobs.append((job_id, job, error_msg))
-                
-                # Track the incident and check if it's new
-                is_new = track_incident(service, network, job['id'], error_msg)
-                if is_new:
-                    new_failures.append((job_id, job, error_msg))
-                    
-                if not suppress_notifications:
-                    send_pagerduty_alert(f"job_fail_{service}_{network}_{job['id']}", 
-                                       f"Job approval error on {service} {network}", 
-                                       {"error": error_msg, "node": chainlink_api.node_url, "job_id": job['id']})
-                continue
-                
-        except Exception as e:
-            error_msg = f"Failed to approve job {job_id}: {str(e)}"
-            logger.error(error_msg)
-            failed_jobs.append((job_id, job, str(e)))
-            
-            # Track the incident and check if it's new
-            is_new = track_incident(service, network, job['id'], error_msg)
-            if is_new:
-                new_failures.append((job_id, job, error_msg))
-                
-            if not suppress_notifications:
-                send_pagerduty_alert(f"job_fail_{service}_{network}_{job['id']}", 
-                                   f"Job approval error on {service} {network}", 
-                                   {"error": str(e), "node": chainlink_api.node_url, "job_id": job['id']})
-            continue
-            
+        # Send PagerDuty alert for each failure
+        send_pagerduty_alert(
+            f"job_fail_{service}_{network}_{job_id}", 
+            f"Job approval error on {service} {network}", 
+            {"error": error_msg, "node": network, "job_id": job_id}
+        )
+    
     # Send Slack alert only for new failures
-    if new_failures and not suppress_notifications:
+    if new_failures:
         # Format detailed failure messages for the code block
         failure_messages = []
-        for job_id, job, error in new_failures:
-            job_details = f"Job {job['id']}: {job['name']}\nerror: {error}"
+        for job in new_failures:
+            job_details = f"Job {job.get('id', 'Unknown')}: {job.get('name', 'Unknown')}"
             failure_messages.append(job_details)
         
         # Send formatted message with @channel mention
         failure_message = f"@channel :warning: Job approval failed for {service} {network}:\n```" + "\n\n".join(failure_messages) + "```"
         send_slack_alert(failure_message)
-        
-    # Send Slack alert for approved jobs
-    if approved_jobs and not suppress_notifications:
-        # Format job names as a list with the service/network as header
-        approved_job_names = "\n".join(job['name'] for job in approved_jobs)
-        success_message = f"✅ Approved jobs for {service} {network}:\n```{approved_job_names}```"
-        send_slack_alert(success_message)
-        
-    return approved_jobs, failed_jobs
 
 @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
 def send_slack_alert(message):

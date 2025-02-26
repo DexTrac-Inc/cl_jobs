@@ -3,7 +3,14 @@ import os
 import json
 import argparse
 from core.chainlink_api import ChainlinkAPI
-from utils.helpers import load_config
+from utils.helpers import load_config, confirm_action
+from utils.bridge_ops import (
+    get_bridges, 
+    get_bridge,
+    create_bridge, 
+    delete_bridge,
+    batch_process_bridges
+)
 
 def register_arguments(subparsers):
     """
@@ -19,13 +26,13 @@ def register_arguments(subparsers):
     
     # List bridges command
     list_parser = bridge_subparsers.add_parser('list', help='List bridges')
-    list_parser.add_argument('--service', required=True, help='Service name (e.g. bootstrap, ocr)')
-    list_parser.add_argument('--node', required=True, help='Node name (e.g. arbitrum, ethereum)')
+    list_parser.add_argument('--service', required=True, help='Service name (e.g., bootstrap, ocr)')
+    list_parser.add_argument('--node', required=True, help='Node name (e.g., arbitrum, ethereum)')
     
     # Create bridge command
     create_parser = bridge_subparsers.add_parser('create', help='Create or update bridge')
-    create_parser.add_argument('--service', required=True, help='Service name (e.g. bootstrap, ocr)')
-    create_parser.add_argument('--node', required=True, help='Node name (e.g. arbitrum, ethereum)')
+    create_parser.add_argument('--service', required=True, help='Service name (e.g., bootstrap, ocr)')
+    create_parser.add_argument('--node', required=True, help='Node name (e.g., arbitrum, ethereum)')
     create_parser.add_argument('--name', required=True, help='Bridge name')
     create_parser.add_argument('--url', required=True, help='Bridge URL')
     create_parser.add_argument('--payment', type=str, default="0", help='Minimum contract payment (default: 0)')
@@ -33,16 +40,19 @@ def register_arguments(subparsers):
     
     # Delete bridge command
     delete_parser = bridge_subparsers.add_parser('delete', help='Delete a bridge')
-    delete_parser.add_argument('--service', required=True, help='Service name (e.g. bootstrap, ocr)')
-    delete_parser.add_argument('--node', required=True, help='Node name (e.g. arbitrum, ethereum)')
+    delete_parser.add_argument('--service', required=True, help='Service name (e.g., bootstrap, ocr)')
+    delete_parser.add_argument('--node', required=True, help='Node name (e.g., arbitrum, ethereum)')
     delete_parser.add_argument('--name', required=True, help='Bridge name to delete')
+    delete_parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation prompt')
     
     # Batch create bridges from bridge groups
     batch_parser = bridge_subparsers.add_parser('batch', help='Batch create bridges from bridge configuration')
-    batch_parser.add_argument('--service', required=True, help='Service name (e.g. bootstrap, ocr)')
-    batch_parser.add_argument('--node', required=True, help='Node name (e.g. arbitrum, ethereum)')
-    batch_parser.add_argument('--group', help='Specific bridge group to use (overrides node\'s bridge_group from config)')
+    batch_parser.add_argument('--service', required=True, help='Service name (e.g., bootstrap, ocr)')
+    batch_parser.add_argument('--node', required=True, help='Node name (e.g., arbitrum, ethereum)')
+    batch_parser.add_argument('--group', help='Specific bridge group to use (overrides node\'s bridge groups from config)')
     batch_parser.add_argument('--bridges-config', default='cl_bridges.json', help='Path to bridges configuration file')
+    batch_parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation prompt')
+    batch_parser.add_argument('--execute', action='store_true', help='Execute changes')
     
     return parser
 
@@ -51,34 +61,64 @@ def execute(args, chainlink_api):
     Execute the bridge command
     
     Parameters:
-    - args: Parsed arguments
+    - args: Command line arguments
     - chainlink_api: Initialized ChainlinkAPI instance
-    
-    Returns:
-    - True if successful, False otherwise
     """
-    # Get bridge command
-    if not hasattr(args, 'bridge_command') or not args.bridge_command:
-        print("❌ Error: No bridge command specified. Use 'list', 'create', 'delete', or 'batch'.")
-        return False
-    
-    # Authenticate with the Chainlink Node
-    if not chainlink_api.authenticate():
-        print(f"❌ Error: Authentication failed for {args.service.upper()} {args.node.upper()}")
-        return False
-    
-    # Execute appropriate command
-    if args.bridge_command == 'list':
-        return list_bridges(args, chainlink_api)
-    elif args.bridge_command == 'create':
-        return create_bridge(args, chainlink_api)
-    elif args.bridge_command == 'delete':
-        return delete_bridge(args, chainlink_api)
-    elif args.bridge_command == 'batch':
-        return batch_create_bridges(args, chainlink_api)
-    else:
-        print(f"❌ Error: Unknown bridge command '{args.bridge_command}'")
-        return False
+    if args.bridge_command == "list":
+        bridges = get_bridges(chainlink_api)
+        
+        if not bridges:
+            print("No bridges found")
+            return
+            
+        for bridge in bridges:
+            print(f"🔗 {bridge['name']}: {bridge['url']}")
+        
+        print(f"Total bridges: {len(bridges)}")
+        
+    elif args.bridge_command == "create":
+        create_bridge(
+            chainlink_api, 
+            args.name, 
+            args.url, 
+            args.confirmations, 
+            args.payment
+        )
+        
+    elif args.bridge_command == "delete":
+        if not args.yes and not confirm_action(f"Delete bridge '{args.name}'?"):
+            print("❌ Operation cancelled by user")
+            return
+            
+        response = chainlink_api.session.delete(
+            f"{chainlink_api.node_url}/v2/bridge_types/{args.name}",
+            verify=False
+        )
+        
+        if response.status_code == 200:
+            print(f"✅ Bridge '{args.name}' deleted successfully")
+        else:
+            print(f"❌ Failed to delete bridge '{args.name}', status code: {response.status_code}")
+            
+    elif args.bridge_command == "batch":
+        if not args.execute:
+            print("\n⚠️ Dry run mode. No changes will be made.")
+            print("💡 Run with --execute to actually create/update bridges.")
+            return
+            
+        if not args.yes and not confirm_action("Create/update bridges based on configuration?"):
+            print("❌ Operation cancelled by user")
+            return
+            
+        successful, failed = batch_process_bridges(
+            chainlink_api, 
+            args.service, 
+            args.node,
+            bridges_config_file=args.bridges_config
+        )
+        
+        print("=" * 60)
+        print(f"Bridge batch processing complete: {successful} successful, {failed} failed")
 
 def list_bridges(args, chainlink_api):
     """
@@ -460,3 +500,127 @@ def update_bridge(chainlink_api, bridge_name, bridge_data):
     except Exception as e:
         print(f"❌ Exception when updating bridge '{bridge_name}': {e}")
         return False
+
+def create_bridge(chainlink_api, name, url, confirmations=0, min_payment=0):
+    """
+    Create or update a bridge
+    
+    Parameters:
+    - chainlink_api: Initialized ChainlinkAPI instance
+    - name: Name of the bridge
+    - url: URL of the bridge adapter
+    - confirmations: Number of confirmations
+    - min_payment: Minimum contract payment
+    
+    Returns:
+    - Boolean indicating success or failure
+    """
+    try:
+        bridge_data = {
+            "name": name,
+            "url": url,
+            "confirmations": confirmations,
+            "minimumContractPayment": str(min_payment)
+        }
+        
+        response = chainlink_api.session.post(
+            f"{chainlink_api.node_url}/v2/bridge_types",
+            json=bridge_data,
+            verify=False
+        )
+        
+        if response.status_code in [200, 201]:
+            print(f"✅ Bridge '{name}' created/updated successfully")
+            return True
+        else:
+            print(f"❌ Failed to create/update bridge '{name}', status code: {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+    except Exception as e:
+        print(f"❌ Exception when creating/updating bridge '{name}': {e}")
+        return False
+
+def batch_process_bridges(chainlink_api, service, node, config_file="cl_hosts.json", bridges_config_file="cl_bridges.json"):
+    """
+    Process bridges in batch based on configuration files
+    
+    Parameters:
+    - chainlink_api: Initialized ChainlinkAPI instance
+    - service: Service name (e.g., bootstrap, ocr)
+    - node: Node name (e.g., arbitrum, ethereum)
+    - config_file: Path to config file
+    - bridges_config_file: Path to bridges configuration file
+    
+    Returns:
+    - Tuple of (successful_count, failed_count)
+    """
+    try:
+        # Load node configuration to get bridge groups
+        with open(config_file, "r") as file:
+            node_config_data = json.load(file)
+        
+        # Get bridge group for node
+        bridge_groups = []
+        try:
+            node_config = node_config_data["services"][service][node]
+            
+            # Check for bridge_groups array first, fall back to single bridge_group
+            if "bridge_groups" in node_config:
+                bridge_groups = node_config["bridge_groups"]
+                print(f"Using multiple bridge groups from node config: {bridge_groups}")
+            elif "bridge_group" in node_config:
+                bridge_groups = [node_config["bridge_group"]]
+                print(f"Using single bridge group from node config: {bridge_groups[0]}")
+            else:
+                print(f"❌ No bridge_group or bridge_groups specified for {service}/{node} in config")
+                return 0, 0
+        except KeyError:
+            print(f"❌ Service '{service}' or node '{node}' not found in {config_file}")
+            return 0, 0
+            
+        # Load bridges configuration
+        with open(bridges_config_file, "r") as file:
+            bridges_config = json.load(file)
+        
+        # Build a consolidated mapping of bridges from all configured groups
+        consolidated_bridges = {}
+        for group in bridge_groups:
+            if group not in bridges_config.get("bridges", {}):
+                print(f"⚠️ Bridge group '{group}' not found in bridges configuration, skipping")
+                continue
+                
+            # Add bridges from this group to the consolidated mapping
+            group_bridges = bridges_config["bridges"][group]
+            consolidated_bridges.update(group_bridges)
+        
+        if not consolidated_bridges:
+            print(f"❌ No valid bridge groups found for {service}/{node}")
+            return 0, 0
+            
+        # Get existing bridges to avoid unnecessary updates
+        existing_bridges = get_bridges(chainlink_api)
+        existing_bridge_names = {bridge["name"]: bridge for bridge in existing_bridges}
+        
+        successful = 0
+        failed = 0
+        
+        # Process each bridge
+        print(f"Processing {len(consolidated_bridges)} bridges from configuration...")
+        
+        for bridge_name, bridge_url in consolidated_bridges.items():
+            # Skip if bridge already exists with same URL
+            if bridge_name in existing_bridge_names and existing_bridge_names[bridge_name]["url"] == bridge_url:
+                print(f"ℹ️ Bridge '{bridge_name}' already exists with correct URL, skipping")
+                successful += 1
+                continue
+                
+            print(f"Creating/updating bridge '{bridge_name}' with URL '{bridge_url}'")
+            if create_bridge(chainlink_api, bridge_name, bridge_url):
+                successful += 1
+            else:
+                failed += 1
+                
+        return successful, failed
+    except Exception as e:
+        print(f"❌ Exception during batch processing: {e}")
+        return 0, 0

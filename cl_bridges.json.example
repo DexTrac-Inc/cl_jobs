@@ -1,25 +1,16 @@
 {
     "bridges": {
-        "group_1": {
-            "bridge-example-1": "https://0.0.0.0",
-            "bridge-example-2": "https://0.0.0.0",
-            "bridge-example-3": "https://0.0.0.0",
-            "bridge-example-4": "https://0.0.0.0",
-            "bridge-example-5": "https://0.0.0.0"
+        "default_adapters": {
+            "bridge-cmc": "http://adapter:8081",
+            "bridge-cg": "http://adapter:8082",
+            "bridge-tgo": "http://adapter:8083"
         },
-        "group_2": {
-            "bridge-example-1": "https://1.0.0.0",
-            "bridge-example-2": "https://1.0.0.0",
-            "bridge-example-3": "https://1.0.0.0",
-            "bridge-example-4": "https://1.0.0.0",
-            "bridge-example-5": "https://1.0.0.0"
+        "ethereum_bridges": {
+            "bridge-ebalance": "http://adapter:8084"
         },
-        "group_3": {
-            "bridge-example-1": "https://2.0.0.0",
-            "bridge-example-2": "https://2.0.0.0",
-            "bridge-example-3": "https://2.0.0.0",
-            "bridge-example-4": "https://2.0.0.0",
-            "bridge-example-5": "https://2.0.0.0"
+        "price_feeds": {
+            "bridge-bnc": "http://adapter:8085",
+            "bridge-cc": "http://adapter:8086"
         }
     }
 }

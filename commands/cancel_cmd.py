@@ -9,13 +9,14 @@ def register_arguments(subparsers):
     Parameters:
     - subparsers: Subparsers object from argparse
     """
-    parser = subparsers.add_parser('cancel', help='Cancel Chainlink jobs matching specific patterns')
-    parser.add_argument('--service', required=True, help='Service name (e.g. bootstrap, ocr)')
-    parser.add_argument('--node', required=True, help='Node name (e.g. arbitrum, ethereum)')
-    parser.add_argument('--execute', action='store_true', help='Execute cancellations (default: dry run)')
-    parser.add_argument('--feed-ids-file', help='Path to file containing feed IDs to cancel (one per line)')
-    parser.add_argument('--name-pattern', help='Cancel jobs with names matching this pattern (e.g. "cron-capabilities")')
-    parser.add_argument('--job-id', help='Cancel job with specific ID')
+    parser = subparsers.add_parser('cancel', help='Cancel jobs')
+    parser.add_argument('--service', required=True, help='Service name (e.g., bootstrap, ocr)')
+    parser.add_argument('--node', required=True, help='Node name (e.g., arbitrum, ethereum)')
+    parser.add_argument('--name-pattern', help='Pattern to match job names (case-insensitive)')
+    parser.add_argument('--feed-ids', nargs='+', help='List of feed IDs to cancel')
+    parser.add_argument('--feed-ids-file', help='File containing feed IDs to cancel (one per line)')
+    parser.add_argument('--execute', action='store_true', help='Execute changes')
+    parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation prompt')
     
     return parser
 
@@ -31,8 +32,8 @@ def execute(args, chainlink_api):
     - True if successful, False otherwise
     """
     # Validate arguments - need at least one way to identify jobs
-    if not args.feed_ids_file and not args.name_pattern and not args.job_id:
-        print("❌ Error: You must specify either --feed-ids-file, --name-pattern, or --job-id")
+    if not args.feed_ids_file and not args.name_pattern and not args.feed_ids:
+        print("❌ Error: You must specify either --feed-ids-file, --name-pattern, or --feed-ids")
         return False
     
     print("\n" + "=" * 60)
@@ -50,10 +51,8 @@ def execute(args, chainlink_api):
     
     # Display criteria
     criteria = []
-    if args.job_id:
-        criteria.append(f"job ID: {args.job_id}")
-    if feed_ids_to_cancel:
-        criteria.append(f"{len(feed_ids_to_cancel)} feed IDs")
+    if args.feed_ids:
+        criteria.append(f"{len(args.feed_ids)} feed IDs")
     if non_hex_patterns:
         criteria.append(f"{len(non_hex_patterns)} pattern(s): {', '.join(non_hex_patterns)}")
     
@@ -84,7 +83,7 @@ def execute(args, chainlink_api):
 
         jobs = chainlink_api.fetch_jobs(fm["id"])
         jobs_to_cancel, matched_feed_ids, matched_patterns = get_jobs_to_cancel(
-            jobs, feed_ids_to_cancel, non_hex_patterns, args.job_id
+            jobs, feed_ids_to_cancel, non_hex_patterns, args.feed_ids
         )
         
         # Add to the overall list of jobs to cancel
@@ -148,7 +147,7 @@ def execute(args, chainlink_api):
     return True
 
 
-def get_jobs_to_cancel(jobs, feed_ids_to_cancel, non_hex_patterns, job_id):
+def get_jobs_to_cancel(jobs, feed_ids_to_cancel, non_hex_patterns, feed_ids):
     """
     Identify jobs to cancel based on criteria
     
@@ -156,7 +155,7 @@ def get_jobs_to_cancel(jobs, feed_ids_to_cancel, non_hex_patterns, job_id):
     - jobs: List of jobs to filter
     - feed_ids_to_cancel: List of feed IDs to match
     - non_hex_patterns: List of text patterns to match
-    - job_id: Specific job ID to match
+    - feed_ids: List of specific feed IDs to match
     
     Returns:
     - Tuple of (jobs_to_cancel, matched_feed_ids, matched_patterns)
@@ -179,16 +178,11 @@ def get_jobs_to_cancel(jobs, feed_ids_to_cancel, non_hex_patterns, job_id):
         matched_identifier = None
         
         # Check for specific job ID match
-        if job_id and job_id_value == job_id:
-            match_reason = f"job ID {job_id}"
-            matched_identifier = job_id
-        
-        # Check for feed ID matches
-        elif feed_ids_to_cancel:
+        if feed_ids:
             for i, feed_id_lower in enumerate(feed_ids_lower):
                 if feed_id_lower in job_name_lower:
-                    match_reason = f"feed ID {feed_ids_to_cancel[i]}"
-                    matched_identifier = feed_ids_to_cancel[i]
+                    match_reason = f"feed ID {feed_ids[i]}"
+                    matched_identifier = feed_ids[i]
                     matched_feed_ids.add(matched_identifier)
                     break
         

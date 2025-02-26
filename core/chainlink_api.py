@@ -242,6 +242,9 @@ class ChainlinkAPI:
             json={"query": mutation, "variables": {"id": spec_id, "force": force}},
             verify=False
         )
+        
+        # Store the last response for error analysis
+        self.session._last_response = response
 
         result = response.json()
         if "errors" in result:

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import json
-from utils.helpers import load_feed_ids
+import sys
+from core.chainlink_api import ChainlinkAPI
+from utils.helpers import confirm_action
+from utils.bridge_ops import create_missing_bridges, check_bridge_config
 
 def register_arguments(subparsers):
     """
@@ -9,11 +12,14 @@ def register_arguments(subparsers):
     Parameters:
     - subparsers: Subparsers object from argparse
     """
-    parser = subparsers.add_parser('reapprove', help='Reapprove canceled Chainlink jobs matching specific feed IDs or patterns')
-    parser.add_argument('--service', required=True, help='Service name (e.g. bootstrap, ocr)')
-    parser.add_argument('--node', required=True, help='Node name (e.g. arbitrum, ethereum)')
-    parser.add_argument('--execute', action='store_true', help='Execute reapprovals (default: dry run)')
-    parser.add_argument('--feed-ids-file', required=True, help='Path to file containing feed IDs or patterns (one per line)')
+    parser = subparsers.add_parser('reapprove', help='Reapprove cancelled jobs')
+    parser.add_argument('--service', required=True, help='Service name (e.g., bootstrap, ocr)')
+    parser.add_argument('--node', required=True, help='Node name (e.g., arbitrum, ethereum)')
+    parser.add_argument('--name-pattern', help='Pattern to match job names (case-insensitive)')
+    parser.add_argument('--feed-ids', nargs='+', help='List of feed IDs to reapprove')
+    parser.add_argument('--feed-ids-file', help='File containing feed IDs to reapprove (one per line)')
+    parser.add_argument('--execute', action='store_true', help='Execute changes')
+    parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation prompt')
     
     return parser
 
@@ -22,205 +28,189 @@ def execute(args, chainlink_api):
     Execute the reapprove command
     
     Parameters:
-    - args: Parsed arguments
+    - args: Command line arguments
     - chainlink_api: Initialized ChainlinkAPI instance
     
     Returns:
-    - True if successful, False otherwise
+    - int: Exit code (0 for success, non-zero for errors)
     """
-    print("\n" + "=" * 60)
-    print(f"🔍 Checking for canceled jobs on {args.service.upper()} {args.node.upper()} ({chainlink_api.node_url})")
+    print(f"🔍 Reapproving jobs on {args.service.upper()} {args.node.upper()} ({chainlink_api.node_url})")
     
-    # Load feed IDs and patterns
-    feed_ids_to_reapprove, non_hex_patterns = load_feed_ids(args.feed_ids_file)
+    # Collect feed IDs if specified
+    feed_ids = set()
     
-    if not feed_ids_to_reapprove and not non_hex_patterns:
-        print("❌ Error: No valid identifiers found in file")
-        return False
+    if args.feed_ids:
+        feed_ids.update([feed_id.lower() for feed_id in args.feed_ids])
+        
+    if args.feed_ids_file:
+        try:
+            with open(args.feed_ids_file, 'r') as f:
+                file_feed_ids = [line.strip().lower() for line in f if line.strip()]
+                feed_ids.update(file_feed_ids)
+        except Exception as e:
+            print(f"❌ Error reading feed IDs file: {str(e)}")
+            return 1
     
-    # Display criteria
-    criteria = []
-    if feed_ids_to_reapprove:
-        criteria.append(f"{len(feed_ids_to_reapprove)} feed IDs")
-    if non_hex_patterns:
-        criteria.append(f"{len(non_hex_patterns)} pattern(s): {', '.join(non_hex_patterns)}")
-    
-    print(f"🔍 Using {' and '.join(criteria)} for job matching")
-    
-    # Authenticate with the Chainlink Node
-    if not chainlink_api.authenticate():
-        return False
-    
-    # Get all feeds managers
+    # Process each feeds manager
     feeds_managers = chainlink_api.get_all_feeds_managers()
+    
     if not feeds_managers:
-        print(f"✅ No feeds managers found")
-        return True
+        print("❌ No feeds managers found")
+        return 1
     
-    found_jobs = False
-    all_unmatched_feed_ids = []
-    all_unmatched_patterns = []
-    total_jobs = 0
-    total_successful = 0
-    total_failed = 0
-    
-    # Track all matched patterns globally across feed managers
-    all_matched_feed_ids = set()
-    all_matched_patterns = set()
+    jobs_to_reapprove = []
     
     for fm in feeds_managers:
-        print(f"🔍 Fetching job proposals for {fm['name']}")
-
+        print(f"\n📋 Processing feeds manager: {fm['name']}")
+        
+        # Fetch all jobs for this feeds manager
         jobs = chainlink_api.fetch_jobs(fm["id"])
-        jobs_to_reapprove, matched_feed_ids, matched_patterns = get_jobs_to_reapprove(
-            jobs, feed_ids_to_reapprove, non_hex_patterns
-        )
         
-        # Track all matched identifiers globally
-        all_matched_feed_ids.update(matched_feed_ids)
-        all_matched_patterns.update(matched_patterns)
-
-        if not jobs_to_reapprove:
-            print(f"✅ No jobs to reapprove for {fm['name']}")
-            continue
-        
-        found_jobs = True
-        print(f"📋 Found {len(jobs_to_reapprove)} jobs to reapprove for {fm['name']}")
-        total_jobs += len(jobs_to_reapprove)
-        
-        # Just list the jobs if not in execute mode
-        if not args.execute:
-            print("📃 Jobs that would be reapproved (dry run):")
-            for spec_id, job_name, identifier, match_reason, job_id in jobs_to_reapprove:
-                print(f"  - {job_name} (Job ID: {job_id}, Spec ID: {spec_id}, Match: {match_reason})")
-        else:
-            # Add a progress counter
-            print(f"⏳ Starting reapproval of {len(jobs_to_reapprove)} jobs...")
-            successful, failed = reapprove_jobs(chainlink_api, jobs_to_reapprove)
-            total_successful += successful
-            total_failed += failed
-    
-    # Compute truly unmatched identifiers globally
-    all_unmatched_feed_ids = [feed_id for feed_id in feed_ids_to_reapprove if feed_id not in all_matched_feed_ids]
-    all_unmatched_patterns = [pattern for pattern in non_hex_patterns if pattern not in all_matched_patterns]
-    
-    # Report on unmatched feed IDs
-    if all_unmatched_feed_ids:
-        print("\n" + "=" * 60)
-        print(f"⚠️ Found {len(all_unmatched_feed_ids)} feed IDs with no matching canceled jobs:")
-        
-        # Show all unmatched feed IDs (no limit)
-        for feed_id in sorted(all_unmatched_feed_ids):
-            print(f"  - {feed_id}")
-    
-    # Report on unmatched patterns
-    if all_unmatched_patterns:
-        print("\n" + "=" * 60)
-        print(f"⚠️ Found {len(all_unmatched_patterns)} patterns with no matching canceled jobs:")
-        
-        # Show all unmatched patterns (no limit)
-        for pattern in sorted(all_unmatched_patterns):
-            print(f"  - {pattern}")
-    
-    # Print summary
-    if args.execute and found_jobs:
-        print("\n" + "=" * 60)
-        print(f"📊 Job Reapproval Summary:")
-        print(f"  Total jobs processed: {total_jobs}")
-        print(f"  Successfully reapproved: {total_successful}")
-        print(f"  Failed to reapprove: {total_failed}")
+        for job in jobs:
+            # Default to false for jobs without a pendingUpdate field
+            if not job.get('pendingUpdate', False):
+                continue
+                
+            # Apply name filter if specified
+            if args.name_pattern and args.name_pattern.lower() not in job.get('name', '').lower():
+                continue
+                
+            # Apply feed ID filter if specified
+            if feed_ids:
+                job_feed_id = extract_feed_id(job)
+                if not job_feed_id or job_feed_id.lower() not in feed_ids:
+                    continue
             
-    if not found_jobs:
-        print("✅ No matching jobs found for reapproval")
-    elif not args.execute:
-        print("\n⚠️ Dry run completed. Use --execute flag to perform actual reapprovals.")
-    
-    return True
-
-def get_jobs_to_reapprove(jobs, feed_ids, non_hex_patterns):
-    """
-    Identify Jobs to Reapprove based on feed IDs or patterns
-    
-    Parameters:
-    - jobs: List of jobs from the API
-    - feed_ids: List of feed IDs to match
-    - non_hex_patterns: List of patterns to match
-    
-    Returns:
-    - Tuple of (jobs_to_reapprove, matched_feed_ids, matched_patterns)
-    """
-    jobs_to_reapprove = []
-    matched_feed_ids = set()
-    matched_patterns = set()
-    
-    # Convert all feed IDs and patterns to lowercase for case-insensitive comparison
-    feed_ids_lower = [feed_id.lower() for feed_id in feed_ids]
-    
-    for job in jobs:
-        # Check for "CANCELLED" or "CANCELED" status (handle different spellings)
-        job_status = job.get("status", "").upper()
-        if job_status in ["CANCELLED", "CANCELED"]:
-            job_name = job.get("name", "")
-            job_name_lower = job_name.lower()
-            match_reason = None
-            matched_identifier = None
+            # Find the latest spec
+            latest_spec = None
+            if job.get('specs'):
+                # Sort specs by version (highest first)
+                sorted_specs = sorted(job['specs'], key=lambda x: x.get('version', 0), reverse=True)
+                if sorted_specs:
+                    latest_spec = sorted_specs[0]
             
-            # Check for feed ID matches
-            for i, feed_id_lower in enumerate(feed_ids_lower):
-                if feed_id_lower in job_name_lower:
-                    match_reason = f"feed ID {feed_ids[i]}"
-                    matched_identifier = feed_ids[i]
-                    matched_feed_ids.add(matched_identifier)
-                    break
-            
-            # Check for non-hex pattern matches if no feed ID matched
-            if not match_reason and non_hex_patterns:
-                for pattern in non_hex_patterns:
-                    if pattern.lower() in job_name_lower:
-                        match_reason = f"pattern '{pattern}'"
-                        matched_identifier = pattern
-                        matched_patterns.add(pattern)
-                        break
-            
-            # If we found a match, add the job to our reapprove list
-            if match_reason:
-                # We need the latest spec ID - this is what we'll try to approve
-                latest_spec_id = job.get("latestSpec", {}).get("id")
-                if latest_spec_id:
-                    jobs_to_reapprove.append((latest_spec_id, job_name, matched_identifier, match_reason, job["id"]))
-                else:
-                    print(f"⚠️ Warning: Job '{job_name}' has no latest spec ID")
+            if latest_spec:
+                job_details = {
+                    'id': job.get('id', 'Unknown'),
+                    'name': job.get('name', 'Unknown'),
+                    'spec_id': latest_spec.get('id', 'Unknown'),
+                    'status': job.get('status', 'Unknown')
+                }
+                jobs_to_reapprove.append(job_details)
     
-    # Sort jobs by name alphabetically
-    jobs_to_reapprove.sort(key=lambda x: x[1])
+    # Display jobs that will be reapproved
+    if not jobs_to_reapprove:
+        print("\n✅ No jobs need to be reapproved")
+        return 0
+        
+    print(f"\n📋 Found {len(jobs_to_reapprove)} jobs to reapprove:")
+    print("-" * 80)
+    print("{:<44} {:<30} {:<12}".format("Job ID", "Name", "Status"))
+    print("-" * 80)
     
-    return jobs_to_reapprove, matched_feed_ids, matched_patterns
-
-def reapprove_jobs(chainlink_api, jobs_to_reapprove):
-    """
-    Reapprove a list of jobs
+    for job in jobs_to_reapprove:
+        print("{:<44} {:<30} {:<12}".format(
+            job['id'], 
+            job['name'] if len(job['name']) < 27 else job['name'][:24] + "...",
+            job['status']
+        ))
     
-    Parameters:
-    - chainlink_api: ChainlinkAPI instance
-    - jobs_to_reapprove: List of jobs to reapprove
+    # Confirm and execute reapprovals
+    if not args.execute:
+        print("\n⚠️ Dry run mode. No changes will be made.")
+        print("💡 Run with --execute to actually reapprove the jobs.")
+        return 0
+        
+    if not args.yes and not confirm_action("Do you want to reapprove these jobs?"):
+        print("❌ Operation cancelled by user")
+        return 0
     
-    Returns:
-    - Tuple of (successful_count, failed_count)
-    """
-    successful = 0
-    failed = 0
+    # Actually approve the jobs
+    print("\n🔄 Reapproving jobs...")
     
-    for spec_id, job_name, identifier, match_reason, job_id in jobs_to_reapprove:
+    success_count = 0
+    error_count = 0
+    
+    for job in jobs_to_reapprove:
+        spec_id = job['spec_id']
+        print(f"  Reapproving {job['name']} (Spec ID: {spec_id})...")
+        
         try:
-            print(f"⏳ Reapproving job spec ID: {spec_id} for job proposal ID: {job_id} ({job_name})")
+            success = chainlink_api.approve_job(spec_id, force=True)
             
-            if chainlink_api.approve_job(spec_id, force=True):
-                print(f"✅ Reapproved job spec ID: {spec_id} for job ({job_name})")
-                successful += 1
+            if success:
+                print(f"  ✅ Successfully reapproved {job['name']}")
+                success_count += 1
             else:
-                failed += 1
+                # Check the error response for bridge-related issues
+                error_response = getattr(chainlink_api.session, '_last_response', None)
+                if error_response and hasattr(error_response, 'text'):
+                    error_text = error_response.text
+                    if "bridge check: not all bridges exist" in error_text:
+                        print(f"  🔄 Bridge error detected. Attempting to create missing bridges...")
+                        
+                        # Create missing bridges and retry
+                        if create_missing_bridges(chainlink_api, error_text, args.service, args.node, log_to_console=True):
+                            print(f"  ✅ Missing bridges created successfully. Retrying approval...")
+                            
+                            # Retry approval
+                            retry_success = chainlink_api.approve_job(spec_id, force=True)
+                            if retry_success:
+                                print(f"  ✅ Successfully reapproved {job['name']} after adding missing bridges")
+                                success_count += 1
+                                continue
+                            else:
+                                print(f"  ❌ Failed to reapprove {job['name']} even after adding bridges")
+                        else:
+                            print(f"  ❌ Failed to create missing bridges for {job['name']}")
+                            
+                            # Check if bridges exist in other groups
+                            missing_bridges, other_group_bridges = check_bridge_config(error_text, args.service, args.node, log_to_console=True)
+                            
+                            if missing_bridges:
+                                print(f"  ❌ These bridges are not configured in any group: {', '.join(missing_bridges)}")
+                                
+                            if other_group_bridges:
+                                print(f"  ℹ️ Some bridges exist in other bridge groups:")
+                                for bridge, groups in other_group_bridges:
+                                    print(f"    - {bridge} found in groups: {', '.join(groups)}")
+                
+                # If we get here, the job approval failed
+                print(f"  ❌ Failed to reapprove {job['name']}")
+                error_count += 1
+                
         except Exception as e:
-            print(f"❌ Exception when reapproving job {spec_id}: {e}")
-            failed += 1
+            print(f"  ❌ Exception when reapproving {job['name']}: {str(e)}")
+            error_count += 1
     
-    return successful, failed
+    # Summary
+    print("\n" + "=" * 60)
+    print(f"Reapproval completed: {success_count} successful, {error_count} failed")
+    print("=" * 60)
+    
+    return 0 if error_count == 0 else 1
+
+def extract_feed_id(job):
+    """
+    Extract feed ID from a job
+    
+    Parameters:
+    - job: Job data from the API
+    
+    Returns:
+    - Feed ID string or None if not found
+    """
+    name = job.get('name', '')
+    
+    # Some jobs have the feed ID in the name with a prefix like "feed-id:"
+    for prefix in ['feed-id:', 'feed_id:', 'feedid:']:
+        if prefix in name.lower():
+            parts = name.split(prefix, 1)
+            if len(parts) > 1:
+                # The feed ID is after the prefix, get the first word
+                feed_id = parts[1].strip().split()[0].strip()
+                return feed_id
+                
+    # For jobs without a clear feed ID marker, just use the name
+    # This relies on the feed_ids provided by the user
+    return name

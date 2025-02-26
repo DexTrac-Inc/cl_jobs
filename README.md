@@ -36,7 +36,7 @@ An automated system for managing and approving Chainlink node jobs. This applica
 2. Copy the example configuration files and update them with your settings:
    ```bash
    cp .env.example .env
-   cp cl_host.json.example cl_hosts.json
+   cp cl_hosts.json.example cl_hosts.json
    ```
 
 3. Update the configuration files:
@@ -70,13 +70,23 @@ The configuration file supports multiple chainlink nodes. Each entry requires:
 
 ## Usage
 
-The application now provides a unified interface through the `cl_jobs_manager.py` script:
+The application provides two main interfaces:
 
-```bash
-python cl_jobs_manager.py COMMAND [OPTIONS]
-```
+1. **Automated job approval** using the scheduler:
+   ```bash
+   # Start the scheduler for automated job approvals
+   python cl_job_scheduler.py
+   
+   # Run job check and approval manually
+   python cl_jobs.py
+   ```
 
-Available commands:
+2. **Manual job management** through the unified command interface:
+   ```bash
+   python cl_jobs_manager.py COMMAND [OPTIONS]
+   ```
+
+Available commands for manual management:
 - `list`: List and filter jobs
 - `cancel`: Cancel jobs based on criteria
 - `reapprove`: Reapprove cancelled jobs
@@ -85,11 +95,6 @@ Common options for all commands:
 - `--service`: Service name from cl_hosts.json (e.g., bootstrap, ocr)
 - `--node`: Node name from cl_hosts.json (e.g., arbitrum, ethereum)
 - `--config`: Path to config file (default: cl_hosts.json)
-
-In addition, the scheduler can be run:
-```bash
-python cl_job_scheduler.py
-```
 
 ### Job Listing
 
@@ -237,9 +242,10 @@ Logs are written to multiple locations:
 
 ## Directory Structure
 ```
-├── cl_jobs_manager.py     # Main command interface script
-├── cl_job_scheduler.py    # Scheduler script
-├── commands/              # Command implementations
+├── cl_jobs_manager.py     # Main command interface script for manual management
+├── cl_job_scheduler.py    # Scheduler script for automated operations
+├── cl_jobs.py             # Main job checking/approval script for automated operations
+├── commands/              # Command implementations for manual management
 │   ├── __init__.py
 │   ├── list_cmd.py        # List command functionality
 │   ├── cancel_cmd.py      # Cancel command functionality

@@ -167,38 +167,27 @@ def delete_bridge(chainlink_api, bridge_name, log_to_console=True):
 
 def get_bridge_groups(service, node, config_file="cl_hosts.json", log_to_console=True):
     """
-    Get bridge groups for a specific node
-    
-    Parameters:
-    - service: Service name (e.g., bootstrap, ocr)
-    - node: Node name (e.g., arbitrum, ethereum)
-    - config_file: Path to the config file
-    - log_to_console: Whether to print results to console
-    
-    Returns:
-    - List of bridge groups or empty list if not found
+    Get the bridge groups for a node from the configuration
     """
     try:
         with open(config_file, "r") as file:
-            config_data = json.load(file)
+            config = json.load(file)
+            
+        # Convert service and node to lowercase for case-insensitive comparison
+        service_lower = service.lower()
+        node_lower = node.lower()
         
-        node_config = config_data["services"][service][node]
-        
-        # Check for bridge_groups array first, fall back to single bridge_group
-        if "bridge_groups" in node_config:
-            bridge_groups = node_config["bridge_groups"]
-            info_msg = f"Using multiple bridge groups from node config: {bridge_groups}"
-            if log_to_console:
-                print(info_msg)
-            logger.info(info_msg)
-            return bridge_groups
-        elif "bridge_group" in node_config:
-            bridge_groups = [node_config["bridge_group"]]
-            info_msg = f"Using single bridge group from node config: {bridge_groups[0]}"
-            if log_to_console:
-                print(info_msg)
-            logger.info(info_msg)
-            return bridge_groups
+        # Look up the bridge groups for this node
+        if service_lower in config.get("services", {}) and node_lower in config["services"][service_lower]:
+            node_config = config["services"][service_lower][node_lower]
+            
+            # Check for bridge_groups first (array)
+            if "bridge_groups" in node_config and isinstance(node_config["bridge_groups"], list):
+                return node_config["bridge_groups"]
+                
+            # Fall back to bridge_group (string)
+            if "bridge_group" in node_config:
+                return [node_config["bridge_group"]]
         else:
             error_msg = f"No bridge_group or bridge_groups specified for {service}/{node} in config"
             if log_to_console:

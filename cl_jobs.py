@@ -9,6 +9,8 @@ import argparse
 from logging.handlers import SysLogHandler
 from dotenv import load_dotenv
 import time
+import io
+from contextlib import redirect_stdout
 
 # Import components from the job manager
 from core.chainlink_api import ChainlinkAPI
@@ -263,17 +265,60 @@ def approve_jobs(chainlink_api, jobs_to_approve, service, network, suppress_noti
                 
                 logger.error(f"❌ Failed to approve {job_name}")
                 
-                # Use a copy of the original job object and add error info
-                job_copy = job.copy()
-                job_copy['error'] = f"Failed to approve job spec {spec_id}: {error_text}"
-                failed_jobs.append(job_copy)
+                # Create a copy of the job with error details
+                job_with_error = job.copy()
+                job_with_error['error_details'] = error_text
+                
+                # Process bridge errors
+                if "bridge check: not all bridges exist" in error_text:
+                    logger.warning(f"Bridge error detected. Attempting to create missing bridges...")
+                    
+                    # Log the complete error for debugging
+                    logger.debug(f"Full error message: {error_text}")
+                    
+                    # Attempt to create missing bridges
+                    if create_missing_bridges(chainlink_api, error_text, service, network, log_to_console=True):
+                        logger.info(f"Missing bridges created successfully. Retrying approval...")
+                        
+                        # Retry approval
+                        retry_success = chainlink_api.approve_job(spec_id)
+                        if retry_success:
+                            logger.info(f"✅ Successfully approved {job_name} after adding missing bridges")
+                            approved_jobs.append(job)
+                            continue
+                        else:
+                            logger.error(f"❌ Failed to approve {job_name} even after adding bridges")
+                    else:
+                        logger.error(f"❌ Failed to create missing bridges for {job_name}")
+                    
+                    # Check if bridges exist in other groups
+                    missing_bridges, other_group_bridges = check_bridge_config(error_text, service, network, log_to_console=True)
+                    
+                    if missing_bridges:
+                        bridge_error = f"These bridges are not configured in any group: {', '.join(missing_bridges)}"
+                        logger.error(bridge_error)
+                        job_with_error['bridge_diagnostic'] = bridge_error
+                        
+                    if other_group_bridges:
+                        logger.error("Some bridges exist in other bridge groups:")
+                        group_info = []
+                        for bridge, groups in other_group_bridges:
+                            bridge_msg = f"{bridge} found in groups: {', '.join(groups)}"
+                            logger.error(f"  - {bridge_msg}")
+                            group_info.append(bridge_msg)
+                        
+                        if group_info:
+                            job_with_error['other_groups'] = "Bridges found in other groups: " + "; ".join(group_info)
+                
+                failed_jobs.append(job_with_error)
+                
         except Exception as e:
             logger.error(f"❌ Exception when approving {job_name}: {str(e)}")
             
-            # Use a copy of the original job object and add error info
-            job_copy = job.copy()
-            job_copy['error'] = f"Exception when approving job spec {spec_id}: {str(e)}"
-            failed_jobs.append(job_copy)
+            # Create a copy with error details
+            job_with_error = job.copy()
+            job_with_error['error_details'] = str(e)
+            failed_jobs.append(job_with_error)
     
     # Send notifications
     if not suppress_notifications:
@@ -327,7 +372,16 @@ def send_failure_notification(service, network, failed_jobs):
     for job in failed_jobs:
         job_id = job.get('id', 'Unknown')
         job_name = job.get('name', 'Unknown')
-        error_msg = f"Failed to approve job {job_id} ({job_name})"
+        
+        # Build a detailed error message
+        error_details = job.get('error_details', 'No error details available')
+        error_msg = f"Failed to approve job {job_id} ({job_name}): {error_details}"
+        
+        # Add bridge diagnostic information if available
+        if 'bridge_diagnostic' in job:
+            error_msg += f"\n{job['bridge_diagnostic']}"
+        if 'other_groups' in job:
+            error_msg += f"\n{job['other_groups']}"
         
         # Track the incident and check if it's new
         is_new = track_incident(service, network, job_id, error_msg)
@@ -335,10 +389,16 @@ def send_failure_notification(service, network, failed_jobs):
             new_failures.append(job)
             
         # Send PagerDuty alert for each failure
+        alert_details = {
+            "error": error_msg,
+            "node": network,
+            "job_id": job_id
+        }
+        
         send_pagerduty_alert(
             f"job_fail_{service}_{network}_{job_id}", 
             f"Job approval error on {service} {network}", 
-            {"error": error_msg, "node": network, "job_id": job_id}
+            alert_details
         )
     
     # Send Slack alert only for new failures
@@ -347,6 +407,20 @@ def send_failure_notification(service, network, failed_jobs):
         failure_messages = []
         for job in new_failures:
             job_details = f"Job {job.get('id', 'Unknown')}: {job.get('name', 'Unknown')}"
+            
+            if 'error_details' in job:
+                # Truncate long error messages for Slack
+                error_details = job.get('error_details', '')
+                if len(error_details) > 300:
+                    error_details = error_details[:297] + "..."
+                job_details += f"\nError: {error_details}"
+                
+            # Add bridge diagnostic information if available
+            if 'bridge_diagnostic' in job:
+                job_details += f"\n{job['bridge_diagnostic']}"
+            if 'other_groups' in job:
+                job_details += f"\n{job['other_groups']}"
+                
             failure_messages.append(job_details)
         
         # Send formatted message with @channel mention
@@ -433,8 +507,17 @@ def main():
         
         # Initialize API client with retry capabilities
         chainlink_api = ChainlinkAPI(url, EMAIL, password)
-        if not chainlink_api.authenticate():
-            logger.error(f"Authentication failed for {service} {network}")
+        
+        # Capture the authentication message instead of suppressing it
+        f = io.StringIO()
+        with redirect_stdout(f):
+            auth_result = chainlink_api.authenticate()
+        
+        # Get the captured output
+        auth_output = f.getvalue().strip()
+        
+        if not auth_result:
+            logger.error(f"❌ Authentication failed for {service} {network}")
             if not suppress_notifications:
                 auth_alert_key = f"auth_fail_{service}_{network}"
                 send_slack_alert(f":warning: Authentication failed for {service} {network}")
@@ -442,6 +525,10 @@ def main():
                                    f"Authentication failed for {service} {network}", 
                                    {"node_url": url})
             continue
+        
+        # Log the captured authentication success message
+        if auth_output:
+            logger.info(auth_output)
             
         # Check any open incidents
         check_open_incidents(chainlink_api, service, network)

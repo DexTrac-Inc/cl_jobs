@@ -174,3 +174,16 @@ def filter_jobs(jobs, status=None, has_updates=False):
         filtered_jobs = [j for j in filtered_jobs if j.get("pendingUpdate", False)]
     
     return filtered_jobs
+
+def confirm_action(prompt):
+    """
+    Ask the user to confirm an action
+    
+    Parameters:
+    - prompt: Question to ask the user
+    
+    Returns:
+    - Boolean indicating whether the user confirmed (True) or not (False)
+    """
+    response = input(f"{prompt} [y/N]: ").strip().lower()
+    return response == 'y' or response == 'yes'

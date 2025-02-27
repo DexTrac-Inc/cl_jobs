@@ -29,29 +29,38 @@ class ChainlinkAPI:
         self.email = email
         self.password = password
         self.session = None
+        self.authenticated = False
         
     @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
-    def authenticate(self):
+    def authenticate(self, password=None):
         """
         Authenticate with the Chainlink Node
+        
+        Parameters:
+        - password: Password for authentication
         
         Returns:
         - session: Authenticated session object or None if authentication fails
         """
+        # Skip if already authenticated
+        if self.authenticated:
+            return True
+        
         self.session = requests.Session()
         session_endpoint = f"{self.node_url}/sessions"
         
         auth_response = self.session.post(
             session_endpoint,
-            json={"email": self.email, "password": self.password},
+            json={"email": self.email, "password": password or self.password},
             verify=False
         )
 
         if auth_response.status_code != 200:
             print(f"❌ Error: Authentication failed")
-            return None
+            return False
 
         print(f"✅ Authentication successful")
+        self.authenticated = True
         return self.session
     
     @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)

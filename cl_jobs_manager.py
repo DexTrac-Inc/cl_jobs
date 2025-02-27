@@ -105,8 +105,13 @@ def main():
         print(f"❌ Error: Missing PASSWORD_{password_index} environment variable.")
         return 1
     
-    # Initialize the API client
+    # Initialize the API client with all required parameters
     chainlink_api = ChainlinkAPI(node_url, email, password)
+    
+    # Explicitly call authenticate - with our new changes, this will only authenticate if needed
+    if not chainlink_api.authenticate():
+        print(f"❌ Authentication failed for {args.service.upper()} {args.node.upper()} ({node_url})")
+        return 1
     
     # Execute the requested command
     if args.command == 'list':

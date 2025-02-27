@@ -261,64 +261,29 @@ def approve_jobs(chainlink_api, jobs_to_approve, service, network, suppress_noti
                 if error_response and hasattr(error_response, 'text'):
                     error_text = error_response.text
                 
-                # Store the complete error for notifications
-                failed_jobs.append({
-                    'service': service,
-                    'node': network,
-                    'job_id': job_id,
-                    'job_name': job_name,
-                    'error': f"Failed to approve job spec {spec_id}: {error_text}"  # Include the full error text
-                })
+                logger.error(f"❌ Failed to approve {job_name}")
                 
-                # Process bridge errors
-                if "bridge check: not all bridges exist" in error_text:
-                    logger.warning(f"Bridge error detected. Attempting to create missing bridges...")
-                    
-                    # Log the complete error for debugging
-                    logger.debug(f"Full error message: {error_text}")
-                    
-                    # Attempt to create missing bridges
-                    if create_missing_bridges(chainlink_api, error_text, service, network, log_to_console=True):
-                        logger.info(f"Missing bridges created successfully. Retrying approval...")
-                        
-                        # Retry approval
-                        retry_success = chainlink_api.approve_job(spec_id)
-                        if retry_success:
-                            logger.info(f"✅ Successfully approved {job_name} after adding missing bridges")
-                            approved_jobs.append(job)
-                            continue
-                        else:
-                            logger.error(f"❌ Failed to approve {job_name} even after adding bridges")
-                    else:
-                        logger.error(f"❌ Failed to create missing bridges for {job_name}")
-                    
-                    # Check if bridges exist in other groups
-                    missing_bridges, other_group_bridges = check_bridge_config(error_text, service, network, log_to_console=True)
-                    
-                    if missing_bridges:
-                        logger.error(f"These bridges are not configured in any group: {', '.join(missing_bridges)}")
-                        
-                    if other_group_bridges:
-                        logger.error("Some bridges exist in other bridge groups:")
-                        for bridge, groups in other_group_bridges:
-                            logger.error(f"  - {bridge} found in groups: {', '.join(groups)}")
-            
-            # If we get here, the job approval failed
-            logger.error(f"❌ Failed to approve {job_name}")
-            failed_jobs.append(job)
-            
+                # Use a copy of the original job object and add error info
+                job_copy = job.copy()
+                job_copy['error'] = f"Failed to approve job spec {spec_id}: {error_text}"
+                failed_jobs.append(job_copy)
         except Exception as e:
             logger.error(f"❌ Exception when approving {job_name}: {str(e)}")
-            failed_jobs.append(job)
+            
+            # Use a copy of the original job object and add error info
+            job_copy = job.copy()
+            job_copy['error'] = f"Exception when approving job spec {spec_id}: {str(e)}"
+            failed_jobs.append(job_copy)
     
-    # Send notifications if not suppressed
+    # Send notifications
     if not suppress_notifications:
+        # Only send notifications if we have results to report
         if approved_jobs:
             send_approval_notification(service, network, approved_jobs)
         
         if failed_jobs:
             send_failure_notification(service, network, failed_jobs)
-            
+    
     return approved_jobs, failed_jobs
 
 def send_approval_notification(service, network, approved_jobs):

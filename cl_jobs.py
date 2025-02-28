@@ -22,7 +22,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Load environment variables
 load_dotenv()
 
-# Logging setup
+# Logging setup - main application logger
 logger = logging.getLogger("ChainlinkJobManager")
 logger.setLevel(logging.DEBUG)
 
@@ -49,6 +49,11 @@ try:
     logger.addHandler(syslog_handler)
 except (FileNotFoundError, PermissionError):
     logger.warning("Could not connect to syslog, skipping syslog handler")
+
+# Ensure child loggers inherit settings
+logging.getLogger("ChainlinkJobManager.api").setLevel(logging.DEBUG)
+logging.getLogger("ChainlinkJobManager.helpers").setLevel(logging.DEBUG)
+logging.getLogger("ChainlinkJobManager.bridge_ops").setLevel(logging.DEBUG)
 
 # Slack and PagerDuty setup
 SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK")
@@ -226,8 +231,8 @@ def check_open_incidents(chainlink_api, service, network):
         
     logger.info(f"Checking status of {len(incidents[key])} tracked incidents for {service} {network}")
     
-    for fm in chainlink_api.get_all_feeds_managers():
-        jobs = chainlink_api.fetch_jobs(fm["id"])
+    for fm in chainlink_api.get_all_feeds_managers(use_logger=True):
+        jobs = chainlink_api.fetch_jobs(fm["id"], use_logger=True)
         for job in jobs:
             if job['id'] in incidents[key]:
                 if job["status"] != "PENDING" and job.get("latestSpec", {}).get("status") != "PENDING":
@@ -244,6 +249,10 @@ def approve_jobs(chainlink_api, jobs_to_approve, service, network, suppress_noti
     approved_jobs = []
     failed_jobs = []
     
+    # Import needed for redirection
+    import io
+    from contextlib import redirect_stdout
+    
     for spec_id, job in jobs_to_approve:
         job_name = job.get('name', 'Unknown')
         job_id = job.get('id', 'Unknown')
@@ -251,10 +260,13 @@ def approve_jobs(chainlink_api, jobs_to_approve, service, network, suppress_noti
         try:
             logger.info(f"Approving job: {job_name} (Spec ID: {spec_id})")
             
-            success = chainlink_api.approve_job(spec_id)
+            # Suppress direct console output from API
+            f = io.StringIO()
+            with redirect_stdout(f):
+                success = chainlink_api.approve_job(spec_id, use_logger=True)
             
             if success:
-                logger.info(f"✅ Successfully approved {job_name}")
+                logger.info(f"Successfully approved {job_name}")
                 approved_jobs.append(job)
             else:
                 # Get the detailed error from the last response
@@ -262,8 +274,11 @@ def approve_jobs(chainlink_api, jobs_to_approve, service, network, suppress_noti
                 error_text = ""
                 if error_response and hasattr(error_response, 'text'):
                     error_text = error_response.text
+                    # Log the full error via logger
+                    for line in error_text.split('\n'):
+                        logger.debug(line)
                 
-                logger.error(f"❌ Failed to approve {job_name}")
+                logger.error(f"Failed to approve {job_name}")
                 
                 # Create a copy of the job with error details
                 job_with_error = job.copy()
@@ -273,26 +288,41 @@ def approve_jobs(chainlink_api, jobs_to_approve, service, network, suppress_noti
                 if "bridge check: not all bridges exist" in error_text:
                     logger.warning(f"Bridge error detected. Attempting to create missing bridges...")
                     
-                    # Log the complete error for debugging
-                    logger.debug(f"Full error message: {error_text}")
+                    # Use use_logger=True to tell bridge functions to use logger
+                    bridges_created = create_missing_bridges(
+                        chainlink_api, 
+                        error_text, 
+                        service, 
+                        network, 
+                        log_to_console=False,
+                        use_logger=True
+                    )
                     
-                    # Attempt to create missing bridges
-                    if create_missing_bridges(chainlink_api, error_text, service, network, log_to_console=True):
+                    if bridges_created:
                         logger.info(f"Missing bridges created successfully. Retrying approval...")
                         
-                        # Retry approval
-                        retry_success = chainlink_api.approve_job(spec_id)
+                        # Suppress direct console output from retry
+                        f = io.StringIO()
+                        with redirect_stdout(f):
+                            retry_success = chainlink_api.approve_job(spec_id, use_logger=True)
+                        
                         if retry_success:
-                            logger.info(f"✅ Successfully approved {job_name} after adding missing bridges")
+                            logger.info(f"Successfully approved {job_name} after adding missing bridges")
                             approved_jobs.append(job)
                             continue
                         else:
-                            logger.error(f"❌ Failed to approve {job_name} even after adding bridges")
+                            logger.error(f"Failed to approve {job_name} even after adding bridges")
                     else:
-                        logger.error(f"❌ Failed to create missing bridges for {job_name}")
+                        logger.error(f"Failed to create missing bridges for {job_name}")
                     
                     # Check if bridges exist in other groups
-                    missing_bridges, other_group_bridges = check_bridge_config(error_text, service, network, log_to_console=True)
+                    missing_bridges, other_group_bridges = check_bridge_config(
+                        error_text, 
+                        service, 
+                        network, 
+                        log_to_console=False,
+                        use_logger=True
+                    )
                     
                     if missing_bridges:
                         bridge_error = f"These bridges are not configured in any group: {', '.join(missing_bridges)}"
@@ -313,7 +343,7 @@ def approve_jobs(chainlink_api, jobs_to_approve, service, network, suppress_noti
                 failed_jobs.append(job_with_error)
                 
         except Exception as e:
-            logger.error(f"❌ Exception when approving {job_name}: {str(e)}")
+            logger.error(f"Exception when approving {job_name}: {str(e)}")
             
             # Create a copy with error details
             job_with_error = job.copy()
@@ -428,12 +458,13 @@ def send_failure_notification(service, network, failed_jobs):
         send_slack_alert(failure_message)
 
 @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
-def send_slack_alert(message):
+def send_slack_alert(message, use_logger=True):
     """
     Send an alert to Slack
     
     Parameters:
     - message: Message text to send
+    - use_logger: Whether to use logger instead of print
     """
     if SLACK_WEBHOOK:
         logger.debug(f"Sending Slack alert: {message}")
@@ -446,7 +477,7 @@ def send_slack_alert(message):
             logger.error(f"Error sending Slack alert: {str(e)}")
 
 @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
-def send_pagerduty_alert(alert_key, summary, details, action="trigger"):
+def send_pagerduty_alert(alert_key, summary, details, action="trigger", use_logger=True):
     """
     Send an alert to PagerDuty
     
@@ -455,6 +486,7 @@ def send_pagerduty_alert(alert_key, summary, details, action="trigger"):
     - summary: Alert summary
     - details: Alert details
     - action: Action type (trigger, resolve, etc.)
+    - use_logger: Whether to use logger instead of print
     """
     if PAGERDUTY_INTEGRATION_KEY:
         payload = {
@@ -508,16 +540,11 @@ def main():
         # Initialize API client with retry capabilities
         chainlink_api = ChainlinkAPI(url, EMAIL, password)
         
-        # Capture the authentication message instead of suppressing it
-        f = io.StringIO()
-        with redirect_stdout(f):
-            auth_result = chainlink_api.authenticate()
-        
-        # Get the captured output
-        auth_output = f.getvalue().strip()
+        # Call authenticate directly - no extra logging
+        auth_result = chainlink_api.authenticate(use_logger=True)
         
         if not auth_result:
-            logger.error(f"❌ Authentication failed for {service} {network}")
+            # Authentication failed logging is handled in chainlink_api.py
             if not suppress_notifications:
                 auth_alert_key = f"auth_fail_{service}_{network}"
                 send_slack_alert(f":warning: Authentication failed for {service} {network}")
@@ -525,18 +552,14 @@ def main():
                                    f"Authentication failed for {service} {network}", 
                                    {"node_url": url})
             continue
-        
-        # Log the captured authentication success message
-        if auth_output:
-            logger.info(auth_output)
             
         # Check any open incidents
         check_open_incidents(chainlink_api, service, network)
             
-        for fm in chainlink_api.get_all_feeds_managers():
+        for fm in chainlink_api.get_all_feeds_managers(use_logger=True):
             logger.info(f"Fetching job proposals for {fm['name']}")
             try:
-                jobs = chainlink_api.fetch_jobs(fm["id"])
+                jobs = chainlink_api.fetch_jobs(fm["id"], use_logger=True)
                 jobs_to_approve = get_jobs_to_approve(jobs)
                 if not jobs_to_approve:
                     logger.info(f"No approvals needed for {fm['name']}")

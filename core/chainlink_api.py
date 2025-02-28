@@ -4,12 +4,16 @@ import json
 import requests
 import urllib3
 import time
+import logging
 from requests.exceptions import RequestException, SSLError
 
 from utils.helpers import retry_on_connection_error
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Configure logger
+logger = logging.getLogger("ChainlinkJobManager.api")  # Use a child logger of the main application logger
 
 class ChainlinkAPI:
     """
@@ -32,12 +36,13 @@ class ChainlinkAPI:
         self.authenticated = False
         
     @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
-    def authenticate(self, password=None):
+    def authenticate(self, password=None, use_logger=False):
         """
         Authenticate with the Chainlink Node
         
         Parameters:
         - password: Password for authentication
+        - use_logger: Whether to use logger instead of print
         
         Returns:
         - session: Authenticated session object or None if authentication fails
@@ -56,23 +61,38 @@ class ChainlinkAPI:
         )
 
         if auth_response.status_code != 200:
-            print(f"❌ Error: Authentication failed")
+            error_msg = f"Authentication failed for {self.node_url}"
+            if use_logger:
+                logger.error(error_msg)
+            else:
+                print(f"❌ Error: {error_msg}")
             return False
 
-        print(f"✅ Authentication successful")
+        success_msg = f"Authentication successful for {self.node_url}"
+        if use_logger:
+            logger.info(success_msg)
+        else:
+            print(f"✅ {success_msg}")
         self.authenticated = True
         return self.session
     
     @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
-    def get_all_feeds_managers(self):
+    def get_all_feeds_managers(self, use_logger=False):
         """
         Retrieve all feeds managers from the Chainlink node
+        
+        Parameters:
+        - use_logger: Whether to use logger instead of print
         
         Returns:
         - List of feeds managers
         """
         if not self.session:
-            print("❌ Error: Not authenticated. Call authenticate() first.")
+            error_msg = "Not authenticated. Call authenticate() first."
+            if use_logger:
+                logger.error(error_msg)
+            else:
+                print(f"❌ Error: {error_msg}")
             return []
             
         graphql_endpoint = f"{self.node_url}/query"
@@ -97,30 +117,44 @@ class ChainlinkAPI:
         try:
             data = response.json()
             if "errors" in data:
-                print(f"❌ GraphQL Query Error:")
-                print(json.dumps(data["errors"], indent=2))
+                error_msg = "GraphQL Query Error:"
+                if use_logger:
+                    logger.error(error_msg)
+                    logger.error(json.dumps(data["errors"], indent=2))
+                else:
+                    print(f"❌ {error_msg}")
+                    print(json.dumps(data["errors"], indent=2))
                 return []
 
             feeds_managers = data.get("data", {}).get("feedsManagers", {}).get("results", [])
             return feeds_managers
 
         except json.JSONDecodeError:
-            print(f"❌ Failed to decode JSON response from {self.node_url}")
+            error_msg = f"Failed to decode JSON response from {self.node_url}"
+            if use_logger:
+                logger.error(error_msg)
+            else:
+                print(f"❌ {error_msg}")
             return []
     
     @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
-    def fetch_jobs(self, feeds_manager_id):
+    def fetch_jobs(self, feeds_manager_id, use_logger=False):
         """
         Fetch all job proposals for a specific feeds manager
         
         Parameters:
         - feeds_manager_id: ID of the feeds manager
+        - use_logger: Whether to use logger instead of print
         
         Returns:
         - List of job proposals
         """
         if not self.session:
-            print("❌ Error: Not authenticated. Call authenticate() first.")
+            error_msg = "Not authenticated. Call authenticate() first."
+            if use_logger:
+                logger.error(error_msg)
+            else:
+                print(f"❌ Error: {error_msg}")
             return []
             
         graphql_endpoint = f"{self.node_url}/query"
@@ -169,24 +203,33 @@ class ChainlinkAPI:
 
         data = response.json()
         if "errors" in data:
-            print(f"❌ GraphQL Error: {data['errors']}")
+            error_msg = f"GraphQL Error: {data['errors']}"
+            if use_logger:
+                logger.error(error_msg)
+            else:
+                print(f"❌ {error_msg}")
             return []
 
         return data.get("data", {}).get("feedsManager", {}).get("jobProposals", [])
     
     @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
-    def cancel_job(self, job_id):
+    def cancel_job(self, job_id, use_logger=False):
         """
         Cancel a job proposal spec
         
         Parameters:
         - job_id: ID of the job spec to cancel
+        - use_logger: Whether to use logger instead of print
         
         Returns:
         - Boolean indicating success or failure
         """
         if not self.session:
-            print("❌ Error: Not authenticated. Call authenticate() first.")
+            error_msg = "Not authenticated. Call authenticate() first."
+            if use_logger:
+                logger.error(error_msg)
+            else:
+                print(f"❌ Error: {error_msg}")
             return False
             
         graphql_endpoint = f"{self.node_url}/query"
@@ -207,26 +250,36 @@ class ChainlinkAPI:
 
         result = response.json()
         if "errors" in result:
-            print(f"❌ Failed to cancel job ID: {job_id}")
-            print(json.dumps(result, indent=2))
+            error_msg = f"Failed to cancel job ID: {job_id}"
+            if use_logger:
+                logger.error(error_msg)
+                logger.error(json.dumps(result, indent=2))
+            else:
+                print(f"❌ {error_msg}")
+                print(json.dumps(result, indent=2))
             return False
         else:
             return True
     
     @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
-    def approve_job(self, spec_id, force=True):
+    def approve_job(self, spec_id, force=True, use_logger=False):
         """
         Approve or reapprove a job proposal spec
         
         Parameters:
         - spec_id: ID of the spec to approve
         - force: Whether to force approval even if the job has been canceled
+        - use_logger: Whether to use logger instead of print
         
         Returns:
         - Boolean indicating success or failure
         """
         if not self.session:
-            print("❌ Error: Not authenticated. Call authenticate() first.")
+            error_msg = "Not authenticated. Call authenticate() first."
+            if use_logger:
+                logger.error(error_msg)
+            else:
+                print(f"❌ Error: {error_msg}")
             return False
             
         graphql_endpoint = f"{self.node_url}/query"
@@ -257,8 +310,13 @@ class ChainlinkAPI:
 
         result = response.json()
         if "errors" in result:
-            print(f"❌ Failed to approve job spec ID: {spec_id}")
-            print(json.dumps(result, indent=2))
+            error_msg = f"Failed to approve job spec ID: {spec_id}"
+            if use_logger:
+                logger.error(error_msg)
+                logger.error(json.dumps(result, indent=2))
+            else:
+                print(f"❌ {error_msg}")
+                print(json.dumps(result, indent=2))
             return False
         else:
             return True

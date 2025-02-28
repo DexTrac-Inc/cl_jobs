@@ -4,8 +4,12 @@ import json
 import re
 import time
 import random
+import logging
 from functools import wraps
 from requests.exceptions import RequestException, SSLError
+
+# Configure logger - use child logger of main application
+logger = logging.getLogger("ChainlinkJobManager.helpers")
 
 def retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10):
     """
@@ -20,24 +24,35 @@ def retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10):
         @wraps(func)
         def wrapper(*args, **kwargs):
             retries = 0
+            use_logger = kwargs.get('use_logger', False)
             while True:
                 try:
                     return func(*args, **kwargs)
                 except (RequestException, SSLError) as e:
                     retries += 1
                     if retries > max_retries:
-                        print(f"❌ Max retries exceeded. Last error: {e}")
+                        error_msg = f"Max retries exceeded. Last error: {e}"
+                        if use_logger:
+                            logger.error(error_msg)
+                        else:
+                            print(f"❌ {error_msg}")
                         raise
                     
                     # Calculate delay with exponential backoff and jitter
                     delay = min(base_delay * (2 ** (retries - 1)) + random.uniform(0, 1), max_delay)
-                    print(f"⚠️ Connection error: {e}")
-                    print(f"⏳ Retrying in {delay:.2f} seconds... (Attempt {retries}/{max_retries})")
+                    error_msg = f"Connection error: {e}"
+                    retry_msg = f"Retrying in {delay:.2f} seconds... (Attempt {retries}/{max_retries})"
+                    if use_logger:
+                        logger.warning(error_msg)
+                        logger.info(retry_msg)
+                    else:
+                        print(f"⚠️ {error_msg}")
+                        print(f"⏳ {retry_msg}")
                     time.sleep(delay)
         return wrapper
     return decorator
 
-def load_config(config_file, service, node):
+def load_config(config_file, service, node, use_logger=False):
     """
     Load configuration for a specific service and node
     
@@ -45,6 +60,7 @@ def load_config(config_file, service, node):
     - config_file: Path to the config file
     - service: Service name (e.g., bootstrap, ocr)
     - node: Node name (e.g., arbitrum, ethereum)
+    - use_logger: Whether to use logger instead of print
     
     Returns:
     - Tuple of (node_url, password_index) or None if there's an error
@@ -62,19 +78,28 @@ def load_config(config_file, service, node):
             return node_url, password_index
                 
         except KeyError:
-            print(f"❌ Error: Service '{service}' or node '{node}' not found in {config_file}")
+            error_msg = f"Service '{service}' or node '{node}' not found in {config_file}"
+            if use_logger:
+                logger.error(error_msg)
+            else:
+                print(f"❌ Error: {error_msg}")
             return None
             
     except Exception as e:
-        print(f"❌ Error: Failed to load {config_file}: {e}")
+        error_msg = f"Failed to load {config_file}: {e}"
+        if use_logger:
+            logger.error(error_msg)
+        else:
+            print(f"❌ Error: {error_msg}")
         return None
 
-def load_feed_ids(feed_ids_file):
+def load_feed_ids(feed_ids_file, use_logger=False):
     """
     Load feed IDs and non-hex patterns from a file
     
     Parameters:
     - feed_ids_file: Path to file containing feed IDs and patterns
+    - use_logger: Whether to use logger instead of print
     
     Returns:
     - Tuple of (feed_ids, non_hex_patterns) or empty lists on error
@@ -109,9 +134,15 @@ def load_feed_ids(feed_ids_file):
         duplicate_feed_ids = {feed_id: count for feed_id, count in feed_id_count.items() if count > 1}
         
         if duplicate_feed_ids:
-            print(f"⚠️ Warning: Found {len(duplicate_feed_ids)} duplicate feed IDs in the input file:")
-            for feed_id, count in duplicate_feed_ids.items():
-                print(f"  - {feed_id} (appears {count} times)")
+            warning_msg = f"Found {len(duplicate_feed_ids)} duplicate feed IDs in the input file:"
+            if use_logger:
+                logger.warning(warning_msg)
+                for feed_id, count in duplicate_feed_ids.items():
+                    logger.warning(f"  - {feed_id} (appears {count} times)")
+            else:
+                print(f"⚠️ Warning: {warning_msg}")
+                for feed_id, count in duplicate_feed_ids.items():
+                    print(f"  - {feed_id} (appears {count} times)")
         
         # Use only unique feed IDs
         unique_feed_ids = list(feed_id_count.keys())
@@ -119,16 +150,32 @@ def load_feed_ids(feed_ids_file):
         # Summary
         if unique_feed_ids or non_hex_patterns:
             if unique_feed_ids:
-                print(f"✅ Loaded {len(unique_feed_ids)} unique feed IDs from {feed_ids_file}")
+                info_msg = f"Loaded {len(unique_feed_ids)} unique feed IDs from {feed_ids_file}"
+                if use_logger:
+                    logger.info(info_msg)
+                else:
+                    print(f"✅ {info_msg}")
             if non_hex_patterns:
-                print(f"✅ Loaded {len(non_hex_patterns)} non-hex patterns from {feed_ids_file}")
+                info_msg = f"Loaded {len(non_hex_patterns)} non-hex patterns from {feed_ids_file}"
+                if use_logger:
+                    logger.info(info_msg)
+                else:
+                    print(f"✅ {info_msg}")
             return unique_feed_ids, non_hex_patterns
         else:
-            print(f"⚠️ Warning: No valid identifiers found in {feed_ids_file}")
+            warning_msg = f"No valid identifiers found in {feed_ids_file}"
+            if use_logger:
+                logger.warning(warning_msg)
+            else:
+                print(f"⚠️ Warning: {warning_msg}")
             return [], []
         
     except Exception as e:
-        print(f"❌ Error reading feed IDs file: {e}")
+        error_msg = f"Error reading feed IDs file: {e}"
+        if use_logger:
+            logger.error(error_msg)
+        else:
+            print(f"❌ {error_msg}")
         return [], []
 
 def format_table_row(columns, widths, separator=" "):
@@ -175,15 +222,21 @@ def filter_jobs(jobs, status=None, has_updates=False):
     
     return filtered_jobs
 
-def confirm_action(prompt):
+def confirm_action(prompt, use_logger=False):
     """
     Ask the user to confirm an action
     
     Parameters:
     - prompt: Question to ask the user
+    - use_logger: Whether to use logger instead of print
     
     Returns:
     - Boolean indicating whether the user confirmed (True) or not (False)
     """
-    response = input(f"{prompt} [y/N]: ").strip().lower()
+    if use_logger:
+        logger.info(f"{prompt} [y/N]")
+    else:
+        prompt = f"{prompt} [y/N]: "
+    
+    response = input(prompt).strip().lower()
     return response == 'y' or response == 'yes'

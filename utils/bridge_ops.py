@@ -2,9 +2,82 @@
 import json
 import re
 import logging
+import os
+import time
+from functools import lru_cache
 
 # Configure logger
 logger = logging.getLogger("ChainlinkJobManager.bridge_ops")
+
+# Global cache for config files
+CONFIG_CACHE = {
+    # Format: {
+    #   "file_path": {
+    #     "data": loaded_data,
+    #     "last_modified": timestamp,
+    #     "last_checked": timestamp
+    #   }
+    # }
+}
+# How often to check if file has been modified (in seconds)
+CONFIG_CACHE_TTL = 60  # Check for changes every minute
+
+def load_json_config(file_path, use_logger=False):
+    """
+    Load JSON configuration file with caching for better performance
+    
+    Parameters:
+    - file_path: Path to the JSON configuration file
+    - use_logger: Whether to use logger
+    
+    Returns:
+    - Parsed JSON data
+    """
+    global CONFIG_CACHE
+    current_time = time.time()
+    
+    # Check if file is in cache
+    if file_path in CONFIG_CACHE:
+        cache_entry = CONFIG_CACHE[file_path]
+        
+        # Only check for file modification periodically to reduce filesystem operations
+        if current_time - cache_entry["last_checked"] < CONFIG_CACHE_TTL:
+            return cache_entry["data"]
+        
+        # Update last checked time
+        cache_entry["last_checked"] = current_time
+        
+        # Check if file has been modified
+        try:
+            file_mtime = os.path.getmtime(file_path)
+            if file_mtime <= cache_entry["last_modified"]:
+                # File hasn't changed, use cached data
+                return cache_entry["data"]
+        except OSError:
+            # If there's an error checking file time, assume it's changed
+            pass
+    
+    # File not in cache or has been modified, load it
+    try:
+        with open(file_path, "r") as f:
+            data = json.load(f)
+        
+        # Update cache
+        CONFIG_CACHE[file_path] = {
+            "data": data,
+            "last_modified": os.path.getmtime(file_path),
+            "last_checked": current_time
+        }
+        
+        if use_logger:
+            logger.debug(f"Loaded configuration from {file_path}")
+        
+        return data
+    except Exception as e:
+        error_msg = f"Error loading configuration from {file_path}: {e}"
+        if use_logger:
+            logger.error(error_msg)
+        return None
 
 def get_bridges(chainlink_api, log_to_console=True, use_logger=False):
     """
@@ -184,10 +257,27 @@ def delete_bridge(chainlink_api, bridge_name, log_to_console=True, use_logger=Fa
 def get_bridge_groups(service, node, config_file="cl_hosts.json", log_to_console=True, use_logger=False):
     """
     Get the bridge groups for a node from the configuration
+    
+    Parameters:
+    - service: Service name
+    - node: Node name
+    - config_file: Path to configuration file
+    - log_to_console: Whether to print results to console
+    - use_logger: Whether to use logger instead of print
+    
+    Returns:
+    - List of bridge group names
     """
     try:
-        with open(config_file, "r") as file:
-            config = json.load(file)
+        # Use cached config if available
+        config = load_json_config(config_file, use_logger=use_logger)
+        if not config:
+            error_msg = f"Failed to load configuration from {config_file}"
+            if use_logger:
+                logger.error(error_msg)
+            elif log_to_console:
+                print(f"❌ {error_msg}")
+            return []
             
         # Convert service and node to lowercase for case-insensitive comparison
         service_lower = service.lower()
@@ -242,8 +332,15 @@ def get_bridges_from_groups(bridge_groups, bridges_config_file="cl_bridges.json"
     consolidated_bridges = {}
     
     try:
-        with open(bridges_config_file, "r") as file:
-            bridges_config = json.load(file)
+        # Use cached config if available
+        bridges_config = load_json_config(bridges_config_file, use_logger=use_logger)
+        if not bridges_config:
+            error_msg = f"Failed to load bridges configuration from {bridges_config_file}"
+            if use_logger:
+                logger.error(error_msg)
+            elif log_to_console:
+                print(f"❌ {error_msg}")
+            return {}
             
         for group in bridge_groups:
             if group not in bridges_config.get("bridges", {}):
@@ -267,7 +364,7 @@ def get_bridges_from_groups(bridge_groups, bridges_config_file="cl_bridges.json"
         
         return consolidated_bridges
     except Exception as e:
-        error_msg = f"Error loading bridges configuration: {e}"
+        error_msg = f"Error processing bridges configuration: {e}"
         if use_logger:
             logger.error(error_msg)
         elif log_to_console:
@@ -284,20 +381,25 @@ def parse_bridge_error(error_message):
     Returns:
     - Tuple of (required_bridges, existing_bridges)
     """
+    # Pre-compile regex patterns for better performance
+    REQUIRED_PATTERN = re.compile(r'asked for \[(.*?)\]')
+    EXISTING_PATTERN = re.compile(r'exists \[(.*?)\]')
+    BRIDGE_NAME_PATTERN = re.compile(r'\{(bridge-[^\s]+)')
+    
     required_bridges = []
     existing_bridges = []
     
-    # Extract the required bridges from the error message
-    required_bridges_match = re.search(r'asked for \[(.*?)\]', error_message)
+    # Extract the required bridges from the error message (one-pass)
+    required_bridges_match = REQUIRED_PATTERN.search(error_message)
     if required_bridges_match:
         required_bridges = [b.strip() for b in required_bridges_match.group(1).split()]
     
-    # Extract existing bridges if available
-    existing_bridges_match = re.search(r'exists \[(.*?)\]', error_message)
+    # Extract existing bridges if available (one-pass)
+    existing_bridges_match = EXISTING_PATTERN.search(error_message)
     if existing_bridges_match:
         # Extract bridge names from complex structure - we only need the names
         existing_text = existing_bridges_match.group(1)
-        existing_bridges = re.findall(r'\{(bridge-[^\s]+)', existing_text)
+        existing_bridges = BRIDGE_NAME_PATTERN.findall(existing_text)
     
     return required_bridges, existing_bridges
 
@@ -513,10 +615,17 @@ def check_bridge_config(error_text, service, network, log_to_console=True, use_l
     if not required_bridges:
         return [], []
     
-    # Load bridges configuration
     try:
-        with open("cl_bridges.json", "r") as file:
-            bridges_config = json.load(file)
+        # Load bridges configuration
+        bridges_config_file = "cl_bridges.json"
+        bridges_config = load_json_config(bridges_config_file, use_logger=use_logger)
+        if not bridges_config:
+            error_msg = f"Failed to load bridges configuration from {bridges_config_file}"
+            if use_logger:
+                logger.error(error_msg)
+            elif log_to_console:
+                print(f"❌ {error_msg}")
+            return [], []
             
         # Get bridge groups for this node
         current_groups = get_bridge_groups(

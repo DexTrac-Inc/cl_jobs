@@ -98,15 +98,28 @@ def load_hosts():
 
 def load_open_incidents():
     """
-    Load list of open PagerDuty incidents from file
+    Load list of open PagerDuty incidents from file with file locking
+    to prevent race conditions when multiple instances run concurrently
     
     Returns:
     - Dictionary of tracked incidents
     """
+    import fcntl
+    
     try:
         if os.path.exists(INCIDENTS_FILE):
             with open(INCIDENTS_FILE, 'r') as f:
-                return json.load(f)
+                # Acquire a shared lock (multiple readers can access)
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    return json.load(f)
+                finally:
+                    # Release the lock
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        return {}
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error in incidents file: {e}")
+        # If JSON is corrupt, return empty dict
         return {}
     except Exception as e:
         logger.error(f"Error loading incidents file: {e}")
@@ -114,14 +127,50 @@ def load_open_incidents():
 
 def save_open_incidents(incidents):
     """
-    Save list of open PagerDuty incidents to file
+    Save list of open PagerDuty incidents to file with file locking
+    to prevent race conditions when multiple instances run concurrently
     
     Parameters:
     - incidents: Dictionary of incidents to save
     """
+    import fcntl
+    import tempfile
+    import os
+    import shutil
+    
     try:
-        with open(INCIDENTS_FILE, 'w') as f:
-            json.dump(incidents, f, indent=2)
+        # Create a temporary file in the same directory
+        temp_file = tempfile.NamedTemporaryFile(
+            mode='w', 
+            dir=os.path.dirname(os.path.abspath(INCIDENTS_FILE)),
+            delete=False
+        )
+        
+        try:
+            # Write incidents to the temporary file
+            json.dump(incidents, temp_file, indent=2)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())  # Ensure data is written to disk
+            temp_file.close()
+            
+            # Open the target file with exclusive lock
+            with open(INCIDENTS_FILE, 'w') as f:
+                # Acquire an exclusive lock
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                
+                try:
+                    # Copy from temp file to the target file
+                    shutil.copy2(temp_file.name, INCIDENTS_FILE)
+                finally:
+                    # Release the lock
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        finally:
+            # Clean up the temporary file
+            try:
+                os.unlink(temp_file.name)
+            except:
+                pass
+                
     except Exception as e:
         logger.error(f"Error saving incidents file: {e}")
 

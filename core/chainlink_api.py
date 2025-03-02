@@ -5,6 +5,8 @@ import requests
 import urllib3
 import time
 import logging
+import functools
+from datetime import datetime, timedelta
 from requests.exceptions import RequestException, SSLError
 
 from utils.helpers import retry_on_connection_error
@@ -14,6 +16,38 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Configure logger
 logger = logging.getLogger("ChainlinkJobManager.api")  # Use a child logger of the main application logger
+
+# Session pool to reuse connections
+SESSION_POOL = {}
+
+def requires_auth(func):
+    """Decorator to ensure the method is called with an authenticated session"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        use_logger = kwargs.get('use_logger', False)
+        # Check if session needs renewal due to token expiration
+        current_time = datetime.now()
+        if (not self.session or 
+            not self.authenticated or 
+            not hasattr(self, 'token_expiry') or 
+            current_time >= self.token_expiry):
+            success = self.authenticate(use_logger=use_logger)
+            if not success:
+                if use_logger:
+                    logger.error(f"Authentication required for {func.__name__} but failed")
+                else:
+                    print(f"❌ Error: Authentication required for {func.__name__} but failed")
+                # Return appropriate empty value based on function's expected return type
+                return_annotations = getattr(func, '__annotations__', {}).get('return')
+                if return_annotations == bool:
+                    return False
+                elif return_annotations == list:
+                    return []
+                elif return_annotations == dict:
+                    return {}
+                return None
+        return func(self, *args, **kwargs)
+    return wrapper
 
 class ChainlinkAPI:
     """
@@ -34,6 +68,7 @@ class ChainlinkAPI:
         self.password = password
         self.session = None
         self.authenticated = False
+        self.token_expiry = None
         
     @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
     def authenticate(self, password=None, use_logger=False):
@@ -47,10 +82,21 @@ class ChainlinkAPI:
         Returns:
         - session: Authenticated session object or None if authentication fails
         """
-        # Skip if already authenticated
-        if self.authenticated:
+        # Use existing session from pool if available
+        global SESSION_POOL
+        session_key = f"{self.node_url}:{self.email}"
+        
+        # Create a new session or reuse existing one
+        if session_key in SESSION_POOL and SESSION_POOL[session_key]['valid_until'] > datetime.now():
+            self.session = SESSION_POOL[session_key]['session']
+            self.authenticated = True
+            self.token_expiry = SESSION_POOL[session_key]['valid_until']
+            debug_msg = f"Reusing cached session for {self.node_url} (valid until {self.token_expiry})"
+            if use_logger:
+                logger.debug(debug_msg)
             return True
         
+        # Create new session
         self.session = requests.Session()
         session_endpoint = f"{self.node_url}/sessions"
         
@@ -68,7 +114,17 @@ class ChainlinkAPI:
                 print(f"❌ Error: {error_msg}")
             return False
 
-        success_msg = f"Authentication successful for {self.node_url}"
+        # Set token expiry to 24 hours from now (typical Chainlink token lifetime)
+        # You may need to adjust this based on your specific node configuration
+        self.token_expiry = datetime.now() + timedelta(hours=24)
+        
+        # Store in session pool
+        SESSION_POOL[session_key] = {
+            'session': self.session,
+            'valid_until': self.token_expiry
+        }
+
+        success_msg = f"Authentication successful for {self.node_url} (valid until {self.token_expiry})"
         if use_logger:
             logger.info(success_msg)
         else:
@@ -76,8 +132,9 @@ class ChainlinkAPI:
         self.authenticated = True
         return self.session
     
+    @requires_auth
     @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
-    def get_all_feeds_managers(self, use_logger=False):
+    def get_all_feeds_managers(self, use_logger=False) -> list:
         """
         Retrieve all feeds managers from the Chainlink node
         
@@ -87,14 +144,6 @@ class ChainlinkAPI:
         Returns:
         - List of feeds managers
         """
-        if not self.session:
-            error_msg = "Not authenticated. Call authenticate() first."
-            if use_logger:
-                logger.error(error_msg)
-            else:
-                print(f"❌ Error: {error_msg}")
-            return []
-            
         graphql_endpoint = f"{self.node_url}/query"
 
         query = """
@@ -137,8 +186,9 @@ class ChainlinkAPI:
                 print(f"❌ {error_msg}")
             return []
     
+    @requires_auth
     @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
-    def fetch_jobs(self, feeds_manager_id, use_logger=False):
+    def fetch_jobs(self, feeds_manager_id, use_logger=False) -> list:
         """
         Fetch all job proposals for a specific feeds manager
         
@@ -149,14 +199,6 @@ class ChainlinkAPI:
         Returns:
         - List of job proposals
         """
-        if not self.session:
-            error_msg = "Not authenticated. Call authenticate() first."
-            if use_logger:
-                logger.error(error_msg)
-            else:
-                print(f"❌ Error: {error_msg}")
-            return []
-            
         graphql_endpoint = f"{self.node_url}/query"
 
         query = """
@@ -212,8 +254,9 @@ class ChainlinkAPI:
 
         return data.get("data", {}).get("feedsManager", {}).get("jobProposals", [])
     
+    @requires_auth
     @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
-    def cancel_job(self, job_id, use_logger=False):
+    def cancel_job(self, job_id, use_logger=False) -> bool:
         """
         Cancel a job proposal spec
         
@@ -224,14 +267,6 @@ class ChainlinkAPI:
         Returns:
         - Boolean indicating success or failure
         """
-        if not self.session:
-            error_msg = "Not authenticated. Call authenticate() first."
-            if use_logger:
-                logger.error(error_msg)
-            else:
-                print(f"❌ Error: {error_msg}")
-            return False
-            
         graphql_endpoint = f"{self.node_url}/query"
 
         mutation = """
@@ -261,8 +296,9 @@ class ChainlinkAPI:
         else:
             return True
     
+    @requires_auth
     @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
-    def approve_job(self, spec_id, force=True, use_logger=False):
+    def approve_job(self, spec_id, force=True, use_logger=False) -> bool:
         """
         Approve or reapprove a job proposal spec
         
@@ -274,14 +310,6 @@ class ChainlinkAPI:
         Returns:
         - Boolean indicating success or failure
         """
-        if not self.session:
-            error_msg = "Not authenticated. Call authenticate() first."
-            if use_logger:
-                logger.error(error_msg)
-            else:
-                print(f"❌ Error: {error_msg}")
-            return False
-            
         graphql_endpoint = f"{self.node_url}/query"
 
         mutation = """

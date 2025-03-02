@@ -70,7 +70,7 @@ class ChainlinkAPI:
         self.authenticated = False
         self.token_expiry = None
         
-    @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
+    @retry_on_connection_error(max_retries=3, base_delay=2, max_delay=10)
     def authenticate(self, password=None, use_logger=False):
         """
         Authenticate with the Chainlink Node
@@ -103,7 +103,8 @@ class ChainlinkAPI:
         auth_response = self.session.post(
             session_endpoint,
             json={"email": self.email, "password": password or self.password},
-            verify=False
+            verify=False,
+            timeout=10  # 10 second timeout
         )
 
         if auth_response.status_code != 200:
@@ -133,7 +134,7 @@ class ChainlinkAPI:
         return self.session
     
     @requires_auth
-    @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
+    @retry_on_connection_error(max_retries=2, base_delay=1, max_delay=5)
     def get_all_feeds_managers(self, use_logger=False) -> list:
         """
         Retrieve all feeds managers from the Chainlink node
@@ -160,7 +161,8 @@ class ChainlinkAPI:
         response = self.session.post(
             graphql_endpoint,
             json={"query": query},
-            verify=False
+            verify=False,
+            timeout=10  # 10 second timeout
         )
 
         try:
@@ -187,7 +189,7 @@ class ChainlinkAPI:
             return []
     
     @requires_auth
-    @retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
+    @retry_on_connection_error(max_retries=2, base_delay=1, max_delay=5) 
     def fetch_jobs(self, feeds_manager_id, use_logger=False) -> list:
         """
         Fetch all job proposals for a specific feeds manager
@@ -240,7 +242,8 @@ class ChainlinkAPI:
         response = self.session.post(
             graphql_endpoint,
             json={"query": query, "variables": variables},
-            verify=False
+            verify=False,
+            timeout=10  # 10 second timeout
         )
 
         data = response.json()
@@ -255,7 +258,7 @@ class ChainlinkAPI:
         return data.get("data", {}).get("feedsManager", {}).get("jobProposals", [])
     
     @requires_auth
-    @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
+    @retry_on_connection_error(max_retries=2, base_delay=1, max_delay=5)
     def cancel_job(self, job_id, use_logger=False) -> bool:
         """
         Cancel a job proposal spec
@@ -280,7 +283,8 @@ class ChainlinkAPI:
         response = self.session.post(
             graphql_endpoint,
             json={"query": mutation, "variables": {"id": job_id}},
-            verify=False
+            verify=False,
+            timeout=10  # 10 second timeout
         )
 
         result = response.json()
@@ -297,7 +301,7 @@ class ChainlinkAPI:
             return True
     
     @requires_auth
-    @retry_on_connection_error(max_retries=5, base_delay=2, max_delay=30)
+    @retry_on_connection_error(max_retries=2, base_delay=1, max_delay=5)
     def approve_job(self, spec_id, force=True, use_logger=False) -> bool:
         """
         Approve or reapprove a job proposal spec
@@ -330,7 +334,8 @@ class ChainlinkAPI:
         response = self.session.post(
             graphql_endpoint,
             json={"query": mutation, "variables": {"id": spec_id, "force": force}},
-            verify=False
+            verify=False,
+            timeout=10  # 10 second timeout
         )
         
         # Store the last response for error analysis

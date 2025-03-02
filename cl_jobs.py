@@ -506,7 +506,7 @@ def send_failure_notification(service, network, failed_jobs):
         failure_message = f"@channel :warning: Job approval failed for {service} {network}:\n```" + "\n\n".join(failure_messages) + "```"
         send_slack_alert(failure_message)
 
-@retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
+@retry_on_connection_error(max_retries=2, base_delay=1, max_delay=5)
 def send_slack_alert(message, use_logger=True):
     """
     Send an alert to Slack
@@ -518,14 +518,20 @@ def send_slack_alert(message, use_logger=True):
     if SLACK_WEBHOOK:
         logger.debug(f"Sending Slack alert: {message}")
         try:
-            response = requests.post(SLACK_WEBHOOK, json={"text": message}, timeout=30)
+            # Make connection but don't wait too long
+            response = requests.post(
+                SLACK_WEBHOOK, 
+                json={"text": message}, 
+                timeout=10,  # 10 second timeout
+                verify=False  # Skip SSL verification
+            )
             logger.debug(f"Slack response code: {response.status_code}")
         except requests.exceptions.Timeout:
             logger.error("Slack alert timed out")
         except Exception as e:
             logger.error(f"Error sending Slack alert: {str(e)}")
 
-@retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10)
+@retry_on_connection_error(max_retries=2, base_delay=1, max_delay=5)
 def send_pagerduty_alert(alert_key, summary, details, action="trigger", use_logger=True):
     """
     Send an alert to PagerDuty
@@ -554,7 +560,8 @@ def send_pagerduty_alert(alert_key, summary, details, action="trigger", use_logg
             response = requests.post(
                 "https://events.pagerduty.com/v2/enqueue", 
                 json=payload,
-                timeout=30
+                timeout=10,  # 10 second timeout
+                verify=False  # Skip SSL verification
             )
             logger.debug(f"PagerDuty response code: {response.status_code}")
         except requests.exceptions.Timeout:
@@ -569,11 +576,14 @@ def main():
                       help='Suppress Slack and PagerDuty notifications (for manual runs)')
     parser.add_argument('--execute', action='store_true',
                       help='Execute job approvals (override env variable)')
+    parser.add_argument('--quick-fail', action='store_true',
+                      help='Skip authentication after first failure (useful when testing in isolated networks)')
     args = parser.parse_args()
     
     # Override EXECUTE flag if specified in command line
     execute_flag = args.execute or EXECUTE
     suppress_notifications = args.suppress_notifications
+    quick_fail = args.quick_fail
     
     logger.info("=" * 60)
     logger.info("Starting Chainlink Job Manager")
@@ -582,7 +592,13 @@ def main():
     if suppress_notifications:
         logger.info("Notifications are suppressed for this run")
     
+    if quick_fail:
+        logger.info("Quick-fail mode enabled - will skip remaining hosts after first authentication failure")
+    
     hosts = load_hosts()
+    
+    # Flag to track if we've had an authentication failure
+    had_auth_failure = False
     for service, network, url, password in hosts:
         logger.info(f"Checking jobs on {service} {network} ({url})")
         
@@ -600,6 +616,13 @@ def main():
                 send_pagerduty_alert(auth_alert_key, 
                                    f"Authentication failed for {service} {network}", 
                                    {"node_url": url})
+            
+            # In quick-fail mode, stop checking other nodes after first auth failure
+            if quick_fail and not had_auth_failure:
+                had_auth_failure = True
+                logger.warning("Quick-fail mode: Authentication failed, skipping remaining hosts")
+                break
+                
             continue
             
         # Check any open incidents

@@ -70,7 +70,7 @@ class ChainlinkAPI:
         self.authenticated = False
         self.token_expiry = None
         
-    @retry_on_connection_error(max_retries=3, base_delay=2, max_delay=10)
+    @retry_on_connection_error(max_retries=2, base_delay=3, max_delay=5)
     def authenticate(self, password=None, use_logger=False):
         """
         Authenticate with the Chainlink Node
@@ -134,7 +134,7 @@ class ChainlinkAPI:
         return self.session
     
     @requires_auth
-    @retry_on_connection_error(max_retries=2, base_delay=1, max_delay=5)
+    @retry_on_connection_error(max_retries=2, base_delay=3, max_delay=5)
     def get_all_feeds_managers(self, use_logger=False) -> list:
         """
         Retrieve all feeds managers from the Chainlink node
@@ -189,7 +189,7 @@ class ChainlinkAPI:
             return []
     
     @requires_auth
-    @retry_on_connection_error(max_retries=2, base_delay=1, max_delay=5) 
+    @retry_on_connection_error(max_retries=2, base_delay=3, max_delay=5) 
     def fetch_jobs(self, feeds_manager_id, use_logger=False) -> list:
         """
         Fetch all job proposals for a specific feeds manager
@@ -258,7 +258,7 @@ class ChainlinkAPI:
         return data.get("data", {}).get("feedsManager", {}).get("jobProposals", [])
     
     @requires_auth
-    @retry_on_connection_error(max_retries=2, base_delay=1, max_delay=5)
+    @retry_on_connection_error(max_retries=2, base_delay=3, max_delay=5)
     def cancel_job(self, job_id, use_logger=False) -> bool:
         """
         Cancel a job proposal spec
@@ -301,7 +301,7 @@ class ChainlinkAPI:
             return True
     
     @requires_auth
-    @retry_on_connection_error(max_retries=2, base_delay=1, max_delay=5)
+    @retry_on_connection_error(max_retries=2, base_delay=3, max_delay=5)
     def approve_job(self, spec_id, force=True, use_logger=False) -> bool:
         """
         Approve or reapprove a job proposal spec

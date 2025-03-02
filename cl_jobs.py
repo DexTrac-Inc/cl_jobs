@@ -576,14 +576,11 @@ def main():
                       help='Suppress Slack and PagerDuty notifications (for manual runs)')
     parser.add_argument('--execute', action='store_true',
                       help='Execute job approvals (override env variable)')
-    parser.add_argument('--quick-fail', action='store_true',
-                      help='Skip authentication after first failure (useful when testing in isolated networks)')
     args = parser.parse_args()
     
     # Override EXECUTE flag if specified in command line
     execute_flag = args.execute or EXECUTE
     suppress_notifications = args.suppress_notifications
-    quick_fail = args.quick_fail
     
     logger.info("=" * 60)
     logger.info("Starting Chainlink Job Manager")
@@ -592,13 +589,7 @@ def main():
     if suppress_notifications:
         logger.info("Notifications are suppressed for this run")
     
-    if quick_fail:
-        logger.info("Quick-fail mode enabled - will skip remaining hosts after first authentication failure")
-    
     hosts = load_hosts()
-    
-    # Flag to track if we've had an authentication failure
-    had_auth_failure = False
     for service, network, url, password in hosts:
         logger.info(f"Checking jobs on {service} {network} ({url})")
         
@@ -616,13 +607,6 @@ def main():
                 send_pagerduty_alert(auth_alert_key, 
                                    f"Authentication failed for {service} {network}", 
                                    {"node_url": url})
-            
-            # In quick-fail mode, stop checking other nodes after first auth failure
-            if quick_fail and not had_auth_failure:
-                had_auth_failure = True
-                logger.warning("Quick-fail mode: Authentication failed, skipping remaining hosts")
-                break
-                
             continue
             
         # Check any open incidents

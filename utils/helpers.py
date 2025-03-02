@@ -11,14 +11,14 @@ from requests.exceptions import RequestException, SSLError
 # Configure logger - use child logger of main application
 logger = logging.getLogger("ChainlinkJobManager.helpers")
 
-def retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10):
+def retry_on_connection_error(max_retries=2, base_delay=3, max_delay=5):
     """
-    Decorator to retry functions on connection errors with exponential backoff.
+    Decorator to retry functions on connection errors with specific delays.
     
     Parameters:
     - max_retries: Maximum number of retry attempts
-    - base_delay: Initial delay in seconds
-    - max_delay: Maximum delay in seconds
+    - base_delay: Delay in seconds for first retry (3 seconds)
+    - max_delay: Delay in seconds for second retry (5 seconds)
     """
     def decorator(func):
         @wraps(func)
@@ -36,12 +36,20 @@ def retry_on_connection_error(max_retries=3, base_delay=1, max_delay=10):
                             logger.error(error_msg)
                         else:
                             print(f"❌ {error_msg}")
-                        raise
+                        # Return appropriate empty value based on function's annotations
+                        return_annotations = getattr(func, '__annotations__', {}).get('return')
+                        if return_annotations == bool:
+                            return False
+                        elif return_annotations == list:
+                            return []
+                        elif return_annotations == dict:
+                            return {}
+                        return None
                     
-                    # Calculate delay with exponential backoff and jitter
-                    delay = min(base_delay * (2 ** (retries - 1)) + random.uniform(0, 1), max_delay)
+                    # Use specific delays: 3s for first retry, 5s for second retry
+                    delay = base_delay if retries == 1 else max_delay
                     error_msg = f"Connection error: {e}"
-                    retry_msg = f"Retrying in {delay:.2f} seconds... (Attempt {retries}/{max_retries})"
+                    retry_msg = f"Retrying in {delay} seconds... (Attempt {retries}/{max_retries})"
                     if use_logger:
                         logger.warning(error_msg)
                         logger.info(retry_msg)

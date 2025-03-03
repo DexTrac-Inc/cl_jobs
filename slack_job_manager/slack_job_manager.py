@@ -417,8 +417,18 @@ def handle_message(message, say):
                             url = bridge.get("url", "N/A")
                             output += f"{name:{column_width}} {url}\n"
                             
-                        # Send the formatted output
-                        say(f"```\n{output}\n```")
+                        # Break the output into chunks if it's too long for Slack
+                        # Slack has a message size limit of about 4000 characters
+                        chunk_size = 3800
+                        output_chunks = [output[i:i+chunk_size] for i in range(0, len(output), chunk_size)]
+                        
+                        # Send each chunk as a separate message
+                        for i, chunk in enumerate(output_chunks):
+                            if len(output_chunks) > 1:
+                                chunk_header = f"Part {i+1}/{len(output_chunks)}:\n"
+                                say(f"```\n{chunk_header}{chunk}\n```")
+                            else:
+                                say(f"```\n{chunk}\n```")
                         return
                         
                     except Exception as e:
@@ -804,8 +814,18 @@ def handle_direct_bridge_list(node, service, say):
             url = bridge.get("url", "N/A")
             output += f"{name:{column_width}} {url}\n"
             
-        # Send the formatted output
-        say(f"```\n{output}\n```")
+        # Break the output into chunks if it's too long for Slack
+        # Slack has a message size limit of about 4000 characters
+        chunk_size = 3800
+        output_chunks = [output[i:i+chunk_size] for i in range(0, len(output), chunk_size)]
+        
+        # Send each chunk as a separate message
+        for i, chunk in enumerate(output_chunks):
+            if len(output_chunks) > 1:
+                chunk_header = f"Part {i+1}/{len(output_chunks)}:\n"
+                say(f"```\n{chunk_header}{chunk}\n```")
+            else:
+                say(f"```\n{chunk}\n```")
     except Exception as e:
         logger.exception(f"Error listing bridges: {e}")
         say(f"❌ Error listing bridges: {str(e)}")

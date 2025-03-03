@@ -241,8 +241,19 @@ def handle_message(message, say):
             say("❌ You are not authorized to use Chainlink commands. Please contact an administrator.")
         return
     
-    # DIRECT NATURAL LANGUAGE BRIDGE COMMANDS - completely bypass the command parser
+    # DIRECT NATURAL LANGUAGE COMMANDS - completely bypass the command parser
     # Check for specific patterns first
+    
+    # List jobs command
+    list_jobs_match = re.search(r'list\s+jobs\s+on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+    if list_jobs_match:
+        logger.info(f"Detected natural language job list command directly")
+        node = list_jobs_match.group(1)
+        service = list_jobs_match.group(2)
+        handle_direct_job_list(node, service, say)
+        return
+    
+    # List bridges command
     list_bridges_match = re.search(r'list\s+bridges\s+on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
     if list_bridges_match:
         logger.info(f"Detected natural language bridge list command directly")
@@ -798,6 +809,88 @@ def handle_direct_bridge_delete(bridge_name, node, service, say):
     except Exception as e:
         logger.exception(f"Error deleting bridge: {e}")
         say(f"❌ Error deleting bridge: {str(e)}")
+
+def handle_direct_job_list(node, service, say):
+    """Handle direct job list command"""
+    try:
+        # Initialize API
+        api = get_chainlink_api(node, service, say)
+        if not api:
+            return
+            
+        # Start with detailed log output
+        output = f"✅ Authentication successful for {api.node_url}\n"
+        output += f"🔍 Listing jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
+        
+        # Get all feeds managers
+        feeds_managers = api.get_all_feeds_managers()
+        if not feeds_managers:
+            output += "❌ No feeds managers found"
+            say(f"```\n{output}\n```")
+            return
+            
+        # Get all jobs from all feeds managers
+        all_jobs = []
+        for fm in feeds_managers:
+            jobs = api.fetch_jobs(fm["id"])
+            for job in jobs:
+                # Add feeds manager name to job for reference
+                job["feeds_manager"] = fm.get("name", "Unknown")
+                all_jobs.append(job)
+                
+        if not all_jobs:
+            output += "❌ No jobs found"
+            say(f"```\n{output}\n```")
+            return
+            
+        # Sort jobs by name (default)
+        sorted_jobs = sorted(all_jobs, key=lambda j: j.get("attributes", {}).get("name", "").lower())
+        
+        # Count job statuses
+        approved_count = sum(1 for j in sorted_jobs if j.get("attributes", {}).get("status") == "APPROVED")
+        pending_count = sum(1 for j in sorted_jobs if j.get("attributes", {}).get("status") == "PENDING")
+        cancelled_count = sum(1 for j in sorted_jobs if j.get("attributes", {}).get("status") == "CANCELLED")
+        total = len(sorted_jobs)
+        
+        # Add summary at the top
+        output += f"\n📋 Found {total} jobs ({approved_count} approved, {pending_count} pending, {cancelled_count} cancelled):\n"
+        
+        # Determine column widths based on content
+        name_width = max([len(j.get("attributes", {}).get("name", "")) for j in sorted_jobs] + [4], default=30)
+        name_width = max(name_width + 4, 35)  # Ensure minimum width
+        id_width = 10
+        status_width = 12
+        update_width = 10
+        
+        # Table header
+        output += "-" * (name_width + id_width + status_width + update_width + 10) + "\n"
+        output += f"{'Name':{name_width}} {'ID':{id_width}} {'Status':{status_width}} {'Updates':{update_width}}\n"
+        output += "-" * (name_width + id_width + status_width + update_width + 10) + "\n"
+        
+        # Table content
+        for job in sorted_jobs:
+            attrs = job.get("attributes", {})
+            name = attrs.get("name", "N/A")
+            job_id = attrs.get("id", "N/A")
+            status = attrs.get("status", "N/A")
+            has_updates = "Yes" if attrs.get("proposeUpdatesJobSpec") else "No"
+            
+            # Color-code status if possible
+            status_str = status
+            if status == "APPROVED":
+                status_str = "✅ APPROVED"
+            elif status == "PENDING":
+                status_str = "⏳ PENDING"
+            elif status == "CANCELLED":
+                status_str = "❌ CANCELLED"
+            
+            output += f"{name:{name_width}} {job_id:{id_width}} {status_str:{status_width}} {has_updates:{update_width}}\n"
+        
+        # Send the formatted output with code block formatting for monospace
+        say(f"```\n{output}\n```")
+    except Exception as e:
+        logger.exception(f"Error listing jobs: {e}")
+        say(f"❌ Error listing jobs: {str(e)}")
 
 def handle_direct_bridge_create(bridge_name, bridge_url, node, service, say):
     """Handle direct bridge create command"""

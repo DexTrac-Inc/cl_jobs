@@ -102,7 +102,7 @@ def execute(args, chainlink_api=None):
     if args.bridge_command == 'list':
         return list_bridges(args, chainlink_api)
     elif args.bridge_command == 'create':
-        return create_bridge(args, chainlink_api)
+        return create_bridge_command(args, chainlink_api)
     elif args.bridge_command == 'delete':
         return delete_bridge(args, chainlink_api)
     elif args.bridge_command == 'batch':
@@ -187,9 +187,9 @@ def get_all_bridges(chainlink_api):
         print(f"❌ Exception when getting bridges: {e}")
         return []
 
-def create_bridge(args, chainlink_api):
+def create_bridge_command(args, chainlink_api):
     """
-    Create or update a bridge
+    Create or update a bridge (command handler version)
     
     Parameters:
     - args: Parsed arguments

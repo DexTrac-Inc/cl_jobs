@@ -133,14 +133,44 @@ class SlackCommandParser:
         
         # Extract potential arguments with regex based on command
         if command == "cancel" or command == "reapprove":
-            # Look for contract addresses
-            address_match = re.search(r'(0x[a-fA-F0-9]{40})', text)
-            address = address_match.group(1) if address_match else None
+            # Look for job ID in the command
+            job_id_match = re.search(r'(?:--job-id|-j)\s+(\d+)', text)
+            if job_id_match:
+                job_id = job_id_match.group(1)
+                args["job_id"] = job_id
+            
+            # Look for contract addresses (both with and without 0x prefix)
+            # Look for all hex addresses, not just 40 characters (some might be different lengths)
+            address_matches = re.findall(r'(0x[a-fA-F0-9]{6,})', text)
+            
+            # Look for explicit feed_ids flag
+            feed_ids_match = re.search(r'(?:--feed-ids)\s+(0x[a-fA-F0-9]{6,})', text)
+            if feed_ids_match:
+                args["feed_ids"] = [feed_ids_match.group(1)]
+            # If no explicit flag but we found addresses in text
+            elif address_matches:
+                # Process all found addresses to normalize case
+                normalized_addresses = []
+                for addr in address_matches:
+                    # Convert to lowercase to ensure case-insensitive matching
+                    # The get_jobs_to_cancel function converts to lowercase too
+                    normalized_addresses.append(addr.lower())
+                
+                # Use the first address found
+                args["address"] = normalized_addresses[0]
+                # Also set feed_ids for both cancel and reapprove
+                args["feed_ids"] = normalized_addresses
             
             # Look for name patterns in quotes
-            name_pattern_match = re.search(r'"([^"]+)"', text)
+            name_pattern_match = re.search(r'(?:--name-pattern|-n)\s+"([^"]+)"', text)
             if not name_pattern_match:
-                name_pattern_match = re.search(r"'([^']+)'", text)
+                name_pattern_match = re.search(r"(?:--name-pattern|-n)\s+'([^']+)'", text)
+            # Also look for name pattern without explicit flag but in quotes
+            if not name_pattern_match:
+                name_pattern_match = re.search(r'"([^"]+)"', text)
+                if not name_pattern_match:
+                    name_pattern_match = re.search(r"'([^']+)'", text)
+            
             name_pattern = name_pattern_match.group(1) if name_pattern_match else None
             
             # Look for explicit service and node flags
@@ -152,11 +182,9 @@ class SlackCommandParser:
             if node_match:
                 args["node"] = node_match.group(1)
             
-            if address:
-                args["address"] = address
-                # Also set feed_ids for reapprove to ensure it works
-                if command == "reapprove":
-                    args["feed_ids"] = [address]
+            # Look for execute flag
+            if re.search(r'(?:--execute|-e|-x)\b', text):
+                args["execute"] = True
             
             if name_pattern:
                 args["name_pattern"] = name_pattern

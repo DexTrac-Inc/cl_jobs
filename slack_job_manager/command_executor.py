@@ -124,11 +124,38 @@ class CommandExecutor:
                     cmd_args.service = args["service"]
                     cmd_args.node = args["node"]
                     cmd_args.name_pattern = args.get("name_pattern")
-                    cmd_args.feed_ids = [args["address"]] if "address" in args else args.get("feed_ids")
+                    
+                    # Handle feed IDs correctly - this is critical for address matching
+                    if "address" in args:
+                        cmd_args.feed_ids = [args["address"]]
+                    elif "feed_ids" in args:
+                        if isinstance(args["feed_ids"], list):
+                            cmd_args.feed_ids = args["feed_ids"]
+                        else:
+                            # Handle case where feed_ids might be a single string
+                            cmd_args.feed_ids = [args["feed_ids"]]
+                    else:
+                        cmd_args.feed_ids = None
+                    
                     cmd_args.feed_ids_file = None
-                    cmd_args.execute = True  # Always execute (preview will be shown first)
-                    cmd_args.yes = False  # Require confirmation
-                    cmd_args.job_id = args.get("job_id")  # Support for job ID based cancellation
+                    cmd_args.execute = args.get("execute", True)  # Default to execute for Slack
+                    cmd_args.yes = args.get("yes", False)  # Require confirmation by default
+                    
+                    # Handle job_id if provided
+                    if "job_id" in args:
+                        cmd_args.job_id = args["job_id"]
+                        # When job_id is specified, don't use feed_ids to avoid conflicts
+                        if cmd_args.feed_ids and not cmd_args.name_pattern:
+                            logger.info("Both job_id and feed_ids specified, using job_id for cancellation")
+                            cmd_args.feed_ids = None
+                    
+                    # Debug logging to help diagnose issues
+                    if cmd_args.feed_ids:
+                        logger.info(f"Cancelling with feed_ids: {cmd_args.feed_ids}")
+                    if cmd_args.name_pattern:
+                        logger.info(f"Cancelling with name_pattern: {cmd_args.name_pattern}")
+                    if hasattr(cmd_args, 'job_id') and cmd_args.job_id:
+                        logger.info(f"Cancelling with job_id: {cmd_args.job_id}")
                     
                     success = execute_cancel(cmd_args, api)
                     
@@ -145,11 +172,29 @@ class CommandExecutor:
                     cmd_args = Args()
                     cmd_args.service = args["service"]
                     cmd_args.node = args["node"]
-                    cmd_args.feed_ids = [args["address"]] if "address" in args else args.get("feed_ids")
+                    
+                    # Handle feed IDs correctly - this is critical for address matching
+                    if "address" in args:
+                        cmd_args.feed_ids = [args["address"]]
+                    elif "feed_ids" in args:
+                        if isinstance(args["feed_ids"], list):
+                            cmd_args.feed_ids = args["feed_ids"]
+                        else:
+                            # Handle case where feed_ids might be a single string
+                            cmd_args.feed_ids = [args["feed_ids"]]
+                    else:
+                        cmd_args.feed_ids = None
+                        
                     cmd_args.feed_ids_file = None
                     cmd_args.name_pattern = args.get("name_pattern")
                     cmd_args.force = args.get("force", False)
-                    cmd_args.execute = True
+                    cmd_args.execute = args.get("execute", True)  # Default to execute for Slack
+                    
+                    # Debug logging
+                    if cmd_args.feed_ids:
+                        logger.info(f"Reapproving with feed_ids: {cmd_args.feed_ids}")
+                    if cmd_args.name_pattern:
+                        logger.info(f"Reapproving with name_pattern: {cmd_args.name_pattern}")
                     
                     success = execute_reapprove(cmd_args, api)
                     

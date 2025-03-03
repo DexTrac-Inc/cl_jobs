@@ -102,7 +102,7 @@ def execute(args, chainlink_api=None):
     if args.bridge_command == 'list':
         return list_bridges(args, chainlink_api)
     elif args.bridge_command == 'create':
-        return create_bridge(args, chainlink_api)
+        return create_bridge(args, chainlink_api, url=args.url)
     elif args.bridge_command == 'delete':
         return delete_bridge(args, chainlink_api)
     elif args.bridge_command == 'batch':
@@ -187,17 +187,21 @@ def get_all_bridges(chainlink_api):
         print(f"❌ Exception when getting bridges: {e}")
         return []
 
-def create_bridge(args, chainlink_api):
+def create_bridge(args, chainlink_api, url=None):
     """
     Create or update a bridge
     
     Parameters:
     - args: Parsed arguments
     - chainlink_api: Initialized ChainlinkAPI instance
+    - url: Optional URL override (used when URL is passed directly)
     
     Returns:
     - True if successful, False otherwise
     """
+    # Use URL from args if not explicitly provided
+    bridge_url = url if url is not None else args.url
+    
     print(f"🔍 Creating/updating bridge '{args.name}' on {args.service.upper()} {args.node.upper()} ({chainlink_api.node_url})")
     
     # Check if bridge exists
@@ -205,7 +209,7 @@ def create_bridge(args, chainlink_api):
     
     bridge_data = {
         "name": args.name,
-        "url": args.url,
+        "url": bridge_url,
         "minimumContractPayment": args.payment,
         "confirmations": args.confirmations
     }
@@ -214,8 +218,8 @@ def create_bridge(args, chainlink_api):
         print(f"📋 Found existing bridge '{args.name}' with URL: {existing_bridge.get('url')}")
         
         # Check if update is needed
-        if existing_bridge.get('url') != args.url:
-            print(f"🔄 Updating bridge URL from '{existing_bridge.get('url')}' to '{args.url}'")
+        if existing_bridge.get('url') != bridge_url:
+            print(f"🔄 Updating bridge URL from '{existing_bridge.get('url')}' to '{bridge_url}'")
             
             result = update_bridge(chainlink_api, args.name, bridge_data)
             if result:
@@ -568,9 +572,9 @@ def update_bridge(chainlink_api, bridge_name, bridge_data):
         print(f"❌ Exception when updating bridge '{bridge_name}': {e}")
         return False
 
-def create_bridge(chainlink_api, name, url, confirmations=0, min_payment=0):
+def create_bridge_direct(chainlink_api, name, url, confirmations=0, min_payment=0):
     """
-    Create or update a bridge
+    Create or update a bridge directly (utility function)
     
     Parameters:
     - chainlink_api: Initialized ChainlinkAPI instance
@@ -682,7 +686,7 @@ def batch_process_bridges(chainlink_api, service, node, config_file="cl_hosts.js
                 continue
                 
             print(f"Creating/updating bridge '{bridge_name}' with URL '{bridge_url}'")
-            if create_bridge(chainlink_api, bridge_name, bridge_url):
+            if create_bridge_direct(chainlink_api, bridge_name, bridge_url):
                 successful += 1
             else:
                 failed += 1

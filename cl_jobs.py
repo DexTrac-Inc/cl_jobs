@@ -12,43 +12,40 @@ import time
 import io
 from contextlib import redirect_stdout
 
+# Set DOCKER_CONTAINER environment variable for logging
+os.environ['DOCKER_CONTAINER'] = str(os.path.exists('/.dockerenv')).lower()
+
 # Import components from the job manager
 from core.chainlink_api import ChainlinkAPI
-from utils.helpers import load_config, retry_on_connection_error
+from utils.helpers import load_config, retry_on_connection_error, setup_logging
 from utils.bridge_ops import create_missing_bridges, check_bridge_config
+from core.vault_client import vault_client
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Load environment variables
 load_dotenv()
 
-# Logging setup - main application logger
-logger = logging.getLogger("ChainlinkJobManager")
-logger.setLevel(logging.DEBUG)
+# Determine log file path
+log_file = "logs/chainlink_jobs.log" if os.path.exists('/.dockerenv') else "chainlink_jobs.log"
 
-# Define consistent log format
-log_format = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+# Use the setup_logging function for consistent logging setup
+logger = setup_logging(
+    logger_name="ChainlinkJobManager", 
+    log_file=log_file, 
+    level=logging.DEBUG, 
+    docker_mode=os.path.exists('/.dockerenv')
+)
 
-# Console logging (terminal output)
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(log_format)
-console_handler.setLevel(logging.INFO)
-logger.addHandler(console_handler)
-
-# File logging
-file_handler = logging.FileHandler("chainlink_jobs.log")
-file_handler.setFormatter(log_format)
-file_handler.setLevel(logging.DEBUG)
-logger.addHandler(file_handler)
-
-# Syslog (journalctl) logging
-try:
-    syslog_handler = SysLogHandler(address='/dev/log')
-    syslog_handler.setFormatter(logging.Formatter('%(name)s: %(levelname)s %(message)s'))
-    syslog_handler.setLevel(logging.INFO)
-    logger.addHandler(syslog_handler)
-except (FileNotFoundError, PermissionError):
-    logger.warning("Could not connect to syslog, skipping syslog handler")
+# Syslog (journalctl) logging - only if not in Docker
+if not os.path.exists('/.dockerenv'):
+    try:
+        syslog_handler = SysLogHandler(address='/dev/log')
+        syslog_handler.setFormatter(logging.Formatter('%(name)s: %(levelname)s %(message)s'))
+        syslog_handler.setLevel(logging.INFO)
+        logger.addHandler(syslog_handler)
+    except (FileNotFoundError, PermissionError):
+        logger.warning("Could not connect to syslog, skipping syslog handler")
 
 # Ensure child loggers inherit settings
 logging.getLogger("ChainlinkJobManager.api").setLevel(logging.DEBUG)
@@ -74,26 +71,48 @@ def load_hosts():
     Load Chainlink node hosts from configuration
     
     Returns:
-    - List of tuples (service, network, url, password) for all configured nodes
+    - List of tuples (service, network, url, password, node_config) for all configured nodes
     """
+    # Check for config in mounted config directory first
+    docker_config_path = os.path.join("config", os.path.basename(CONFIG_FILE))
+    config_path = docker_config_path if os.path.exists(docker_config_path) else CONFIG_FILE
+    
+    if os.path.exists(docker_config_path):
+        logger.info(f"Using Docker mounted config: {docker_config_path}")
+    
     try:
-        with open(CONFIG_FILE, "r") as file:
+        with open(config_path, "r") as file:
             data = json.load(file)
 
         hosts = []
         for service, networks in data.get("services", {}).items():
             for network, details in networks.items():
                 url = details["url"]
-                password_index = details["password"]
-                password = os.getenv(f"PASSWORD_{password_index}")
-                hosts.append((service.upper(), network.upper(), url, password))
+                password_index = details.get("password", 0)
+                
+                # First try to get password from Vault
+                password = None
+                if vault_client.is_available():
+                    credentials = vault_client.get_chainlink_credentials(network)
+                    if credentials:
+                        logger.debug(f"Retrieved credentials from Vault for {network}")
+                        if f'password_{password_index}' in credentials:
+                            password = credentials.get(f'password_{password_index}')
+                        elif 'password_0' in credentials:
+                            password = credentials.get('password_0')
+                
+                # Fallback to environment variables if needed
+                if not password:
+                    password = os.getenv(f"PASSWORD_{password_index}")
+                
+                hosts.append((service.upper(), network.upper(), url, password, details))
 
         if not hosts:
             logger.error("No hosts found in the JSON file")
         return hosts
 
     except Exception as e:
-        logger.exception(f"Failed to load {CONFIG_FILE}: {e}")
+        logger.exception(f"Failed to load {config_path}: {e}")
         return []
 
 def load_open_incidents():
@@ -590,11 +609,17 @@ def main():
         logger.info("Notifications are suppressed for this run")
     
     hosts = load_hosts()
-    for service, network, url, password in hosts:
+    for service, network, url, password, node_config in hosts:
         logger.info(f"Checking jobs on {service} {network} ({url})")
         
-        # Initialize API client with retry capabilities
-        chainlink_api = ChainlinkAPI(url, EMAIL, password)
+        # Initialize API client with retry capabilities and Vault support
+        chainlink_api = ChainlinkAPI(
+            node_url=url, 
+            email=EMAIL, 
+            password=password, 
+            password_index=node_config.get("password", 0),
+            node_name=network.lower()
+        )
         
         # Call authenticate directly - no extra logging
         auth_result = chainlink_api.authenticate(use_logger=True)

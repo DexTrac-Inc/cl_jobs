@@ -12,7 +12,7 @@ from logging.handlers import RotatingFileHandler
 # Configure logger - use child logger of main application
 logger = logging.getLogger("ChainlinkJobManager.helpers")
 
-def setup_logging(logger_name, log_file=None, level=logging.INFO):
+def setup_logging(logger_name, log_file=None, level=logging.INFO, docker_mode=None):
     """
     Set up logging configuration
     
@@ -20,6 +20,7 @@ def setup_logging(logger_name, log_file=None, level=logging.INFO):
     - logger_name: Name for the logger
     - log_file: File to write logs to (optional)
     - level: Logging level (default: INFO)
+    - docker_mode: Force Docker logging mode (None=auto-detect)
     
     Returns:
     - Configured logger
@@ -28,8 +29,19 @@ def setup_logging(logger_name, log_file=None, level=logging.INFO):
     logger = logging.getLogger(logger_name)
     logger.setLevel(level)
     
-    # Create formatter
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # Check if we're running in Docker
+    if docker_mode is None:
+        docker_mode = os.environ.get('DOCKER_CONTAINER', '').lower() == 'true' or os.path.exists('/.dockerenv')
+    
+    # Create formatter - simpler for Docker
+    if docker_mode:
+        formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    else:
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Prevent adding duplicate handlers
+    if logger.hasHandlers():
+        logger.handlers.clear()
     
     # Create console handler
     console_handler = logging.StreamHandler()
@@ -39,10 +51,20 @@ def setup_logging(logger_name, log_file=None, level=logging.INFO):
     
     # Create file handler if log file is specified
     if log_file:
+        log_dir = os.path.dirname(log_file)
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        
         file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5)
         file_handler.setLevel(level)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
+    
+    # Log startup message
+    if docker_mode:
+        logger.info(f"Logger {logger_name} initialized in Docker mode")
+    else:
+        logger.info(f"Logger {logger_name} initialized")
     
     return logger
 
@@ -124,8 +146,15 @@ def load_config(config_file, service, node, use_logger=False):
     - use_logger: Whether to use logger instead of print
     
     Returns:
-    - Tuple of (node_url, password_index) or None if there's an error
+    - Tuple of (node_url, password_index, node_config) or None if there's an error
     """
+    # Check for config in mounted config directory first
+    docker_config_path = os.path.join("config", os.path.basename(config_file))
+    if os.path.exists(docker_config_path):
+        config_file = docker_config_path
+        if use_logger:
+            logger.info(f"Using Docker mounted config: {config_file}")
+    
     try:
         with open(config_file, "r") as file:
             config_data = json.load(file)
@@ -135,8 +164,10 @@ def load_config(config_file, service, node, use_logger=False):
             service_config = config_data["services"][service]
             node_config = service_config[node]
             node_url = node_config["url"]
-            password_index = node_config["password"]
-            return node_url, password_index
+            password_index = node_config.get("password", 0)
+            
+            # Return the full node_config as well for additional settings
+            return node_url, password_index, node_config
                 
         except KeyError:
             error_msg = f"Service '{service}' or node '{node}' not found in {config_file}"

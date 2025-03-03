@@ -9,8 +9,8 @@ WorkingDirectory=<path_to_cl_jobs>
 ExecStart=<path_to_cl_jobs>/venv/bin/python3 <path_to_cl_jobs>/slack_job_manager/slack_job_manager.py
 Restart=always
 RestartSec=30
-StandardOutput=syslog
-StandardError=syslog
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=slack_job_manager
 Environment=PYTHONUNBUFFERED=1
 # Uncomment and set if not using .env file

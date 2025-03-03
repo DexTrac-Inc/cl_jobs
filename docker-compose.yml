@@ -10,8 +10,11 @@ services:
       - ./config:/app/config:ro
       - ./.env:/app/.env:ro
     restart: always
-    # Run the scheduler that will execute cl_jobs.py every 15 minutes
-    command: ["python", "cl_job_scheduler.py"]
+    environment:
+      - SCHEDULER_INTERVAL_MINUTES=${SCHEDULER_INTERVAL_MINUTES:-15}
+      - DOCKER_CONTAINER=true
+    # Run the scheduler that will execute cl_jobs.py at specified intervals
+    command: ["python", "cl_job_scheduler.py", "--run-now"]
 
   slack_manager:
     build:

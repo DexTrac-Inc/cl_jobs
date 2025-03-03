@@ -9,8 +9,9 @@ services:
       - ./logs:/app/logs
       - ./config:/app/config:ro
       - ./.env:/app/.env:ro
-    restart: unless-stopped
-    command: ["--help"]  # Replace with actual command when running
+    restart: always
+    # Run the scheduler that will execute cl_jobs.py every 15 minutes
+    command: ["python", "cl_job_scheduler.py"]
 
   slack_manager:
     build:

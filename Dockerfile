@@ -15,5 +15,5 @@ RUN mkdir -p /app/logs
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Set entrypoint
-ENTRYPOINT ["python", "cl_jobs_manager.py"]
+# No default entrypoint - we'll specify what to run in docker-compose.yml
+CMD ["python", "cl_job_scheduler.py"]

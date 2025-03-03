@@ -229,10 +229,14 @@ class SlackCommandParser:
                 args["name"] = bridge_name_match.group(1)
             
             # Extract URL for create/update, with more flexible patterns
-            url_match = re.search(r'(?:url|address|endpoint|at|to)\s+["\']?(https?://[^\s"\']+)["\']?', text, re.IGNORECASE)
+            url_match = re.search(r'(?:url|address|endpoint|at|to)\s+["\']?(https?://[^\s"\'<>]+)["\']?', text, re.IGNORECASE)
             if not url_match:
                 # Try with explicit flag
-                url_match = re.search(r'--url\s+["\']?(https?://[^\s"\']+)["\']?', text, re.IGNORECASE)
+                url_match = re.search(r'--url\s+["\']?(https?://[^\s"\'<>]+)["\']?', text, re.IGNORECASE)
+                
+            # If still no match, try to find URL with Slack formatting (within angle brackets)
+            if not url_match:
+                url_match = re.search(r'<(https?://[^>]+)>', text)
             
             if url_match:
                 args["url"] = url_match.group(1)

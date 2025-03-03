@@ -283,11 +283,16 @@ class CommandExecutor:
                             confirmations = args.get("confirmations", 0)
                             min_payment = args.get("min_payment", 0)
                             
+                            # Clean up URL if it contains Slack formatting
+                            if bridge_url and '|' in bridge_url:
+                                # Slack formatted URLs can look like https://example.com|example.com
+                                bridge_url = bridge_url.split('|')[0]
+                            
                             if not bridge_name or not bridge_url:
                                 return False, "Bridge creation requires both name and URL parameters"
                                 
-                            # This accesses the actual create bridge function in bridge_cmd directly
-                            from commands.bridge_cmd import create_bridge as create_bridge_function
+                            # This accesses the actual create bridge function in utils/bridge_ops.py which is more robust
+                            from utils.bridge_ops import create_bridge as create_bridge_function
                             logger.info(f"Creating bridge {bridge_name} with URL {bridge_url}")
                             success = create_bridge_function(api, bridge_name, bridge_url, confirmations, min_payment)
                         else:

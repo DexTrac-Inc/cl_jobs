@@ -127,12 +127,97 @@ class CommandExecutor:
         Returns:
             Tuple of (success, message)
         """
-        print(f"Executing command: {command} with args: {args}")
+        print(f"DEBUG: Executing command: {command} with args: {args}")
         
-        # Special handling for bridge list command which is prone to parsing issues
-        if command == "bridge_list" and "service" in args and "node" in args:
-            print(f"Using direct API access for bridge_list command")
-            return self.execute_bridge_list_command(args)
+        # EMERGENCY FIX FOR BRIDGE_LIST: Completely bypass normal command execution for bridge_list
+        if command == "bridge_list":
+            print(f"DEBUG: Detected bridge_list command!")
+            if "service" in args and "node" in args:
+                print(f"DEBUG: Bridge list has service={args['service']} and node={args['node']}, using direct API access")
+                
+                # Initialize the API directly here
+                service = args["service"]
+                node = args["node"]
+                
+                # Load configuration
+                config_result = None
+                try:
+                    config = self.config
+                    if config and "services" in config and service in config["services"] and node in config["services"][service]:
+                        node_config = config["services"][service][node]
+                        node_url = node_config.get("url")
+                        password_index = node_config.get("password", 0)
+                        
+                        if node_url and password_index is not None:
+                            config_result = (node_url, password_index)
+                            print(f"DEBUG: Found configuration for {service}/{node}: {node_url}")
+                except Exception as e:
+                    print(f"DEBUG: Error loading configuration: {e}")
+                
+                if not config_result:
+                    print(f"DEBUG: Failed to load configuration for {service}/{node}")
+                    return False, f"Failed to connect to {service}/{node}"
+                
+                node_url, password_index = config_result
+                
+                # Get password
+                password = self.passwords.get(password_index)
+                if not password:
+                    print(f"DEBUG: Password not found for index {password_index}")
+                    return False, f"Password not available for {service}/{node}"
+                
+                # Initialize API
+                api = ChainlinkAPI(node_url, self.email)
+                print(f"DEBUG: Initialized API for {node_url}")
+                
+                # Authenticate
+                if not api.authenticate(password):
+                    print(f"DEBUG: Authentication failed for {service}/{node}")
+                    return False, f"Authentication failed for {service}/{node}"
+                print(f"DEBUG: Authentication successful for {service}/{node}")
+                
+                # Now get bridges directly
+                try:
+                    # Import here to avoid circular imports
+                    from utils.bridge_ops import get_bridges
+                    
+                    print(f"DEBUG: Getting bridges for {service}/{node}")
+                    bridges = get_bridges(api, log_to_console=False)
+                    
+                    if not bridges:
+                        print(f"DEBUG: No bridges found for {service}/{node}")
+                        return True, "❌ No bridges found"
+                    
+                    # Sort bridges alphabetically by name
+                    sorted_bridges = sorted(bridges, key=lambda b: b.get("name", "").lower())
+                    
+                    # Determine the maximum name length for proper spacing
+                    max_name_length = max([len(bridge.get("name", "")) for bridge in sorted_bridges], default=30)
+                    # Add padding and ensure it's at least 30 characters
+                    column_width = max(max_name_length + 4, 30)
+                    
+                    # Format the output with bridges information
+                    output = f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n\n"
+                    output += f"📋 Found {len(bridges)} bridges:\n"
+                    output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+                    output += f"{'Name':{column_width}} URL\n"
+                    output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+                    
+                    for bridge in sorted_bridges:
+                        name = bridge.get("name", "N/A")
+                        url = bridge.get("url", "N/A")
+                        output += f"{name:{column_width}} {url}\n"
+                    
+                    print(f"DEBUG: Successfully generated bridge list output")
+                    return True, f"```\n{output}\n```"
+                except Exception as e:
+                    print(f"DEBUG: Exception in bridge list: {e}")
+                    import traceback
+                    print(f"DEBUG: {traceback.format_exc()}")
+                    return False, f"❌ Error listing bridges: {str(e)}"
+            else:
+                print(f"DEBUG: Bridge list missing service or node: {args}")
+                return False, "Missing required arguments for bridge list: service and node are required"
         
         # Check for required arguments
         if command not in ["help"]:
@@ -282,7 +367,10 @@ class CommandExecutor:
                     success = execute_reapprove(cmd_args, api)
                     
                 # Bridge commands
-                elif command.startswith("bridge_"):
+                elif command.startswith("bridge_") and command != "bridge_list":  # Skip bridge_list completely
+                    # DEBUGGING
+                    print(f"DEBUG: Handling bridge command {command} via traditional flow")
+                
                     api = self._initialize_api(args["service"], args["node"])
                     if not api:
                         return False, f"Failed to connect to {args['service']}/{args['node']}"
@@ -297,7 +385,7 @@ class CommandExecutor:
                     cmd_args.config = "cl_hosts.json"  # Default config file
                     cmd_args.bridges_config = "cl_bridges.json"  # Default bridges config
                     
-                    # Skip the bridge_list command since we're handling it separately
+                    # Process based on command type
                     if command == "bridge_create":
                         if not args.get("name") or not args.get("url"):
                             return False, "Bridge creation requires both name and URL parameters"

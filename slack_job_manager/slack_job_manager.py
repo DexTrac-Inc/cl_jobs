@@ -254,8 +254,15 @@ def handle_message(message, say):
             say(help_text)
             return
             
+        # DEBUGGING
+        logger.info(f"About to execute command: {command} with args: {args}")
+        
         # Execute the command
         success, message_text = command_executor.execute_command(command, args)
+        
+        # DEBUGGING
+        logger.info(f"Command execution result: success={success}, message_length={len(message_text) if message_text else 0}")
+        
         say(message_text)
         return
     

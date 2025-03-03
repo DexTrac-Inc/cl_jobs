@@ -720,12 +720,17 @@ def handle_direct_bridge_list(node, service, say):
         if not api:
             return
             
+        # Start with detailed log output
+        output = f"✅ Authentication successful for {api.node_url}\n"
+        output += f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n"
+        
         # Get bridges
         from commands.bridge_cmd import get_all_bridges
         bridges = get_all_bridges(api)
         
         if not bridges:
-            say("❌ No bridges found")
+            output += "❌ No bridges found"
+            say(f"```\n{output}\n```")
             return
             
         # Sort bridges alphabetically by name
@@ -737,8 +742,7 @@ def handle_direct_bridge_list(node, service, say):
         column_width = max(max_name_length + 4, 30)
         
         # Format the output
-        output = f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n\n"
-        output += f"📋 Found {len(bridges)} bridges:\n"
+        output += f"\n📋 Found {len(bridges)} bridges:\n"
         output += "-" * (column_width + 40) + "\n"  # Adjust separator length
         output += f"{'Name':{column_width}} URL\n"
         output += "-" * (column_width + 40) + "\n"  # Adjust separator length
@@ -762,13 +766,21 @@ def handle_direct_bridge_delete(bridge_name, node, service, say):
         if not api:
             return
             
+        # Start with detailed log output
+        output = f"✅ Authentication successful for {api.node_url}\n"
+        output += f"🔍 Deleting bridge '{bridge_name}' from {service.upper()} {node.upper()} ({api.node_url})\n"
+            
         # Check if bridge exists
         from commands.bridge_cmd import get_bridge
         existing_bridge = get_bridge(api, bridge_name)
         
         if not existing_bridge:
-            say(f"❌ Bridge '{bridge_name}' does not exist")
+            output += f"❌ Bridge '{bridge_name}' does not exist"
+            say(f"```\n{output}\n```")
             return
+        
+        output += f"📋 Found bridge '{bridge_name}' with URL: {existing_bridge.get('url')}\n"
+        output += f"🗑️ Proceeding with deletion...\n"
         
         # Delete bridge
         response = api.session.delete(
@@ -777,9 +789,12 @@ def handle_direct_bridge_delete(bridge_name, node, service, say):
         )
         
         if response.status_code == 200:
-            say(f"✅ Bridge '{bridge_name}' deleted successfully")
+            output += f"✅ Bridge '{bridge_name}' deleted successfully"
         else:
-            say(f"❌ Failed to delete bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}")
+            output += f"❌ Failed to delete bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}"
+            
+        # Send the formatted output
+        say(f"```\n{output}\n```")
     except Exception as e:
         logger.exception(f"Error deleting bridge: {e}")
         say(f"❌ Error deleting bridge: {str(e)}")
@@ -792,6 +807,10 @@ def handle_direct_bridge_create(bridge_name, bridge_url, node, service, say):
         if not api:
             return
             
+        # Start with detailed log output
+        output = f"✅ Authentication successful for {api.node_url}\n"
+        output += f"🔍 Creating/updating bridge '{bridge_name}' on {service.upper()} {node.upper()} ({api.node_url})\n"
+        
         # Check if bridge exists
         from commands.bridge_cmd import get_bridge
         existing_bridge = get_bridge(api, bridge_name)
@@ -805,8 +824,12 @@ def handle_direct_bridge_create(bridge_name, bridge_url, node, service, say):
         }
         
         if existing_bridge:
+            output += f"📋 Found existing bridge '{bridge_name}' with URL: {existing_bridge.get('url')}\n"
+            
             # Check if update is needed
             if existing_bridge.get('url') != bridge_url:
+                output += f"🔄 Updating bridge URL from '{existing_bridge.get('url')}' to '{bridge_url}'\n"
+                
                 # Update bridge
                 response = api.session.patch(
                     f"{api.node_url}/v2/bridge_types/{bridge_name}",
@@ -815,12 +838,14 @@ def handle_direct_bridge_create(bridge_name, bridge_url, node, service, say):
                 )
                 
                 if response.status_code == 200:
-                    say(f"✅ Bridge '{bridge_name}' updated successfully from {existing_bridge.get('url')} to {bridge_url}")
+                    output += f"✅ Bridge '{bridge_name}' updated successfully"
                 else:
-                    say(f"❌ Failed to update bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}")
+                    output += f"❌ Failed to update bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}"
             else:
-                say(f"✅ Bridge '{bridge_name}' already exists with correct URL: {bridge_url}")
+                output += f"✅ Bridge already exists with correct URL"
         else:
+            output += f"📋 Bridge '{bridge_name}' does not exist, creating new bridge\n"
+            
             # Create bridge
             response = api.session.post(
                 f"{api.node_url}/v2/bridge_types",
@@ -829,9 +854,12 @@ def handle_direct_bridge_create(bridge_name, bridge_url, node, service, say):
             )
             
             if response.status_code in [200, 201]:
-                say(f"✅ Bridge '{bridge_name}' created successfully with URL: {bridge_url}")
+                output += f"✅ Bridge '{bridge_name}' created successfully"
             else:
-                say(f"❌ Failed to create bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}")
+                output += f"❌ Failed to create bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}"
+                
+        # Send the formatted output
+        say(f"```\n{output}\n```")
     except Exception as e:
         logger.exception(f"Error creating bridge: {e}")
         say(f"❌ Error creating bridge: {str(e)}")

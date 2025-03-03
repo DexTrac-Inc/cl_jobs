@@ -244,13 +244,24 @@ def handle_message(message, say):
     # DIRECT NATURAL LANGUAGE COMMANDS - completely bypass the command parser
     # Check for specific patterns first
     
-    # List jobs command
-    list_jobs_match = re.search(r'list\s+jobs\s+on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+    # List jobs command with optional status filter
+    list_jobs_match = re.search(r'list\s+(?:(\w+)\s+)?jobs\s+on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
     if list_jobs_match:
         logger.info(f"Detected natural language job list command directly")
-        node = list_jobs_match.group(1)
-        service = list_jobs_match.group(2)
-        handle_direct_job_list(node, service, say)
+        status_filter = list_jobs_match.group(1)
+        node = list_jobs_match.group(2)
+        service = list_jobs_match.group(3)
+        
+        # Convert common status words to API values
+        if status_filter:
+            if status_filter.lower() in ['approved', 'active', 'running']:
+                status_filter = 'APPROVED'
+            elif status_filter.lower() in ['cancelled', 'canceled', 'stopped', 'disabled']:
+                status_filter = 'CANCELLED'
+            elif status_filter.lower() in ['pending', 'waiting']:
+                status_filter = 'PENDING'
+                
+        handle_direct_job_list(node, service, say, status_filter)
         return
     
     # List bridges command
@@ -810,8 +821,8 @@ def handle_direct_bridge_delete(bridge_name, node, service, say):
         logger.exception(f"Error deleting bridge: {e}")
         say(f"❌ Error deleting bridge: {str(e)}")
 
-def handle_direct_job_list(node, service, say):
-    """Handle direct job list command"""
+def handle_direct_job_list(node, service, say, status_filter=None):
+    """Handle direct job list command with optional status filtering"""
     try:
         # Initialize API
         api = get_chainlink_api(node, service, say)
@@ -820,7 +831,10 @@ def handle_direct_job_list(node, service, say):
             
         # Start with detailed log output
         output = f"✅ Authentication successful for {api.node_url}\n"
-        output += f"🔍 Listing jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
+        if status_filter:
+            output += f"🔍 Listing {status_filter.lower()} jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
+        else:
+            output += f"🔍 Listing all jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
         
         # Get all feeds managers
         feeds_managers = api.get_all_feeds_managers()
@@ -843,17 +857,26 @@ def handle_direct_job_list(node, service, say):
             say(f"```\n{output}\n```")
             return
             
+        # Filter jobs by status if requested
+        if status_filter:
+            filtered_jobs = [j for j in all_jobs if j.get("status") == status_filter]
+        else:
+            filtered_jobs = all_jobs
+            
         # Sort jobs by name (default)
-        sorted_jobs = sorted(all_jobs, key=lambda j: j.get("name", "").lower())
+        sorted_jobs = sorted(filtered_jobs, key=lambda j: j.get("name", "").lower())
         
         # Count job statuses
-        approved_count = sum(1 for j in sorted_jobs if j.get("status") == "APPROVED")
-        pending_count = sum(1 for j in sorted_jobs if j.get("status") == "PENDING")
-        cancelled_count = sum(1 for j in sorted_jobs if j.get("status") == "CANCELLED")
-        total = len(sorted_jobs)
+        approved_count = sum(1 for j in filtered_jobs if j.get("status") == "APPROVED")
+        pending_count = sum(1 for j in filtered_jobs if j.get("status") == "PENDING")
+        cancelled_count = sum(1 for j in filtered_jobs if j.get("status") == "CANCELLED")
+        total = len(filtered_jobs)
         
         # Add summary at the top
-        output += f"\n📋 Found {total} jobs ({approved_count} approved, {pending_count} pending, {cancelled_count} cancelled):\n"
+        if status_filter:
+            output += f"\n📋 Found {total} {status_filter.lower()} jobs:\n"
+        else:
+            output += f"\n📋 Found {total} jobs ({approved_count} approved, {pending_count} pending, {cancelled_count} cancelled):\n"
         
         # Determine column widths based on content
         name_width = max([len(j.get("name", "")) for j in sorted_jobs] + [4], default=30)

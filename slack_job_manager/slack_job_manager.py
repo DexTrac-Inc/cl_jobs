@@ -244,6 +244,35 @@ def handle_message(message, say):
     # DIRECT NATURAL LANGUAGE COMMANDS - completely bypass the command parser
     # Check for specific patterns first
     
+    # Cancel/reapprove jobs with multiple addresses
+    cancel_reapprove_match = re.search(r'(cancel|reapprove)\s+jobs\s+((?:0x[a-fA-F0-9]{40}(?:\s+|,\s*)?)+)(?:on\s+(\w+)\s+(\w+))?', text, re.IGNORECASE)
+    if cancel_reapprove_match:
+        action = cancel_reapprove_match.group(1).lower()
+        addresses_str = cancel_reapprove_match.group(2)
+        node = cancel_reapprove_match.group(3)
+        service = cancel_reapprove_match.group(4)
+        
+        # Extract multiple addresses from the string
+        # This handles both space-separated and comma-separated formats
+        addresses = re.findall(r'0x[a-fA-F0-9]{40}', addresses_str)
+        logger.info(f"Detected {action} command with {len(addresses)} addresses: {addresses}")
+        
+        if not node or not service:
+            # Try to find the network and service in the rest of the text
+            network_match = re.search(r'on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+            if network_match:
+                node = network_match.group(1)
+                service = network_match.group(2)
+            else:
+                say(f"❌ Please specify node and service (e.g., '{action} jobs {addresses[0]} on tron ocr')")
+                return
+        
+        if action == "cancel":
+            handle_direct_job_cancel(addresses, node, service, say)
+        else:  # reapprove
+            handle_direct_job_reapprove(addresses, node, service, say)
+        return
+    
     # List jobs command with optional status filter
     list_jobs_match = re.search(r'list\s+(?:(\w+)\s+)?jobs\s+on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
     if list_jobs_match:
@@ -924,6 +953,204 @@ def handle_direct_job_list(node, service, say, status_filter=None):
     except Exception as e:
         logger.exception(f"Error listing jobs: {e}")
         say(f"❌ Error listing jobs: {str(e)}")
+
+def handle_direct_job_cancel(addresses, node, service, say):
+    """Handle direct job cancellation command with multiple addresses"""
+    try:
+        # Initialize API
+        api = get_chainlink_api(node, service, say)
+        if not api:
+            return
+            
+        # Start with detailed log output
+        output = f"🔍 Cancelling jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
+        
+        # Make patterns for each address - case insensitive matching
+        patterns = []
+        feed_ids = []
+        for address in addresses:
+            # Create pattern to match in job names
+            patterns.append(f"contract {address.lower()}")
+            feed_ids.append(address)
+            
+        output += f"🔍 Using {len(feed_ids)} feed IDs and {len(patterns)} pattern(s): "
+        output += ", ".join(patterns) + " for job matching\n\n"
+        
+        # Get all feeds managers
+        feeds_managers = api.get_all_feeds_managers()
+        if not feeds_managers:
+            output += "❌ No feeds managers found"
+            say(f"```\n{output}\n```")
+            return
+            
+        # Keep track of all jobs to cancel across all feeds managers
+        all_jobs_to_cancel = []
+        
+        # Find matching jobs
+        for fm in feeds_managers:
+            output += f"📋 Processing feeds manager: {fm.get('name', 'Unknown')}\n\n"
+            
+            jobs = api.fetch_jobs(fm["id"])
+            
+            # Find jobs matching the criteria
+            from commands.cancel_cmd import get_jobs_to_cancel
+            jobs_to_cancel, matched_feed_ids, matched_patterns = get_jobs_to_cancel(
+                jobs, feed_ids, patterns, None
+            )
+            
+            all_jobs_to_cancel.extend(jobs_to_cancel)
+        
+        if not all_jobs_to_cancel:
+            output += "❌ No jobs found matching the specified criteria"
+            say(f"```\n{output}\n```")
+            return
+            
+        # Display jobs that will be cancelled
+        output += f"📋 Found {len(all_jobs_to_cancel)} jobs to cancel:\n"
+        output += "-" * 80 + "\n"
+        output += f"{'Spec ID':<15} {'Name':<30} {'Status':<20} {'Feeds Manager':<15}\n"
+        output += "-" * 80 + "\n"
+        
+        for job_id, job_name, identifier, match_reason in all_jobs_to_cancel:
+            # Truncate long job names
+            if len(job_name) > 27:
+                job_name = job_name[:24] + "..."
+                
+            # Extract status - assume it's part of the identifier
+            status = "N/A"
+            if isinstance(identifier, dict) and "status" in identifier:
+                status = identifier["status"]
+                
+            # Get feeds manager name
+            fm_name = "N/A"
+            for fm in feeds_managers:
+                # Check if the job is in this FM
+                for fm_job in api.fetch_jobs(fm["id"]):
+                    if fm_job.get("id") == job_id:
+                        fm_name = fm.get("name", "N/A")
+                        if len(fm_name) > 12:
+                            fm_name = fm_name[:9] + "..."
+                        break
+                    
+            output += f"{job_id:<15} {job_name:<30} {status:<20} {fm_name:<15}\n"
+            
+        # Cancel the jobs
+        output += f"\n🔄 Cancelling jobs...\n"
+        
+        # Call the cancel_jobs function
+        from commands.cancel_cmd import cancel_jobs
+        successful, failed = cancel_jobs(api, all_jobs_to_cancel)
+        
+        # Show results
+        output += f"\n{'='*60}\n"
+        output += f"📊 Job Cancellation Summary:\n"
+        output += f"  Total jobs processed: {len(all_jobs_to_cancel)}\n"
+        output += f"  Successfully cancelled: {successful}\n"
+        output += f"  Failed to cancel: {failed}\n"
+        
+        # Display the result
+        say(f"```\n{output}\n```")
+    except Exception as e:
+        logger.exception(f"Error cancelling jobs: {e}")
+        say(f"❌ Error cancelling jobs: {str(e)}")
+
+def handle_direct_job_reapprove(addresses, node, service, say):
+    """Handle direct job reapproval command with multiple addresses"""
+    try:
+        # Initialize API
+        api = get_chainlink_api(node, service, say)
+        if not api:
+            return
+            
+        # Start with detailed log output
+        output = f"🔍 Reapproving jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
+        
+        # Make patterns for each address - case insensitive matching
+        patterns = []
+        feed_ids = []
+        for address in addresses:
+            # Create pattern to match in job names
+            patterns.append(f"contract {address.lower()}")
+            feed_ids.append(address)
+            
+        output += f"🔍 Using {len(feed_ids)} feed IDs and {len(patterns)} pattern(s): "
+        output += ", ".join(patterns) + " for job matching\n\n"
+        
+        # Get all feeds managers
+        feeds_managers = api.get_all_feeds_managers()
+        if not feeds_managers:
+            output += "❌ No feeds managers found"
+            say(f"```\n{output}\n```")
+            return
+            
+        # Keep track of all jobs to reapprove across all feeds managers
+        all_jobs_to_reapprove = []
+        
+        # Find matching jobs
+        for fm in feeds_managers:
+            output += f"📋 Processing feeds manager: {fm.get('name', 'Unknown')}\n\n"
+            
+            jobs = api.fetch_jobs(fm["id"])
+            
+            # Find jobs matching the criteria
+            from commands.reapprove_cmd import get_jobs_to_reapprove
+            jobs_to_reapprove = get_jobs_to_reapprove(
+                jobs, feed_ids, patterns, None
+            )
+            
+            all_jobs_to_reapprove.extend(jobs_to_reapprove)
+        
+        if not all_jobs_to_reapprove:
+            output += "❌ No jobs found matching the specified criteria"
+            say(f"```\n{output}\n```")
+            return
+            
+        # Display jobs that will be reapproved
+        output += f"📋 Found {len(all_jobs_to_reapprove)} jobs to reapprove:\n"
+        output += "-" * 80 + "\n"
+        output += f"{'Spec ID':<15} {'Name':<30} {'Status':<20} {'Feeds Manager':<15}\n"
+        output += "-" * 80 + "\n"
+        
+        for spec_id, job_name in all_jobs_to_reapprove:
+            # Truncate long job names
+            if len(job_name) > 27:
+                job_name = job_name[:24] + "..."
+                
+            # Get status from the job (need to find the job again)
+            status = "CANCELLED"  # Default assumption
+            
+            # Get feeds manager name
+            fm_name = "N/A"
+            for fm in feeds_managers:
+                # Look for job by name
+                for fm_job in api.fetch_jobs(fm["id"]):
+                    if fm_job.get("name") == job_name:
+                        fm_name = fm.get("name", "N/A")
+                        if len(fm_name) > 12:
+                            fm_name = fm_name[:9] + "..."
+                        break
+                    
+            output += f"{spec_id:<15} {job_name:<30} {status:<20} {fm_name:<15}\n"
+            
+        # Reapprove the jobs
+        output += f"\n🔄 Reapproving jobs...\n"
+        
+        # Call the reapprove_jobs function
+        from commands.reapprove_cmd import reapprove_jobs
+        successful, failed = reapprove_jobs(api, all_jobs_to_reapprove)
+        
+        # Show results
+        output += f"\n{'='*60}\n"
+        output += f"📊 Job Reapproval Summary:\n"
+        output += f"  Total jobs processed: {len(all_jobs_to_reapprove)}\n"
+        output += f"  Successfully reapproved: {successful}\n"
+        output += f"  Failed to reapprove: {failed}\n"
+        
+        # Display the result
+        say(f"```\n{output}\n```")
+    except Exception as e:
+        logger.exception(f"Error reapproving jobs: {e}")
+        say(f"❌ Error reapproving jobs: {str(e)}")
 
 def handle_direct_bridge_create(bridge_name, bridge_url, node, service, say):
     """Handle direct bridge create command"""

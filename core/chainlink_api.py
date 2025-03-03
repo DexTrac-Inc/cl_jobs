@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 from requests.exceptions import RequestException, SSLError
 
 from utils.helpers import retry_on_connection_error
-from core.vault_client import vault_client
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -70,32 +69,13 @@ class ChainlinkAPI:
         self.node_name = node_name
         self.password_index = password_index
         
-        # Try to get credentials from Vault first
-        if vault_client.is_available() and node_name:
-            logger.debug(f"Getting credentials for {node_name} from Vault")
-            credentials = vault_client.get_chainlink_credentials(node_name)
-            if credentials:
-                self.email = credentials.get('email', email)
-                
-                # Try to get password based on index if provided
-                if password_index is not None and f'password_{password_index}' in credentials:
-                    self.password = credentials.get(f'password_{password_index}')
-                # Fallback to password_0
-                elif 'password_0' in credentials:
-                    self.password = credentials.get('password_0')
-                else:
-                    self.password = password
-            else:
-                self.email = email
-                self.password = password
-        else:
-            # Use provided credentials
-            self.email = email
-            self.password = password
-            
-            # If password not provided but index is, get from environment
-            if not self.password and password_index is not None:
-                self.password = os.environ.get(f'PASSWORD_{password_index}')
+        # Use provided credentials
+        self.email = email
+        self.password = password
+        
+        # If password not provided but index is, get from environment
+        if not self.password and password_index is not None:
+            self.password = os.environ.get(f'PASSWORD_{password_index}')
         
         self.session = None
         self.authenticated = False

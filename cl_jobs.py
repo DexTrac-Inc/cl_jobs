@@ -19,7 +19,6 @@ os.environ['DOCKER_CONTAINER'] = str(os.path.exists('/.dockerenv')).lower()
 from core.chainlink_api import ChainlinkAPI
 from utils.helpers import load_config, retry_on_connection_error, setup_logging
 from utils.bridge_ops import create_missing_bridges, check_bridge_config
-from core.vault_client import vault_client
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 

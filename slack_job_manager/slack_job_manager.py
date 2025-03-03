@@ -419,13 +419,53 @@ def handle_message(message, say):
                             
                         # Break the output into chunks if it's too long for Slack
                         # Slack has a message size limit of about 4000 characters
-                        chunk_size = 3800
-                        output_chunks = [output[i:i+chunk_size] for i in range(0, len(output), chunk_size)]
+                        # Split by lines first to avoid breaking rows between messages
+                        lines = output.split('\n')
+                        
+                        chunks = []
+                        current_chunk = []
+                        current_size = 0
+                        max_chunk_size = 3800
+                        
+                        # Determine where the header ends (usually after the table separator line)
+                        header_end = 0
+                        for i, line in enumerate(lines):
+                            if "-" * 10 in line:  # Find the second separator line
+                                header_end = i + 2  # Include the line after the separator
+                                break
+                        
+                        # Add headers to first chunk
+                        header_lines = lines[:header_end]  # Header lines
+                        header_text = '\n'.join(header_lines)
+                        current_chunk.append(header_text)
+                        current_size = len(header_text)
+                        
+                        # Process the data rows (everything after headers)
+                        for line in lines[header_end:]:
+                            line_length = len(line) + 1  # +1 for the newline character
+                            
+                            # If adding this line would exceed the limit, start a new chunk
+                            if current_size + line_length > max_chunk_size:
+                                # Save current chunk
+                                chunks.append('\n'.join(current_chunk))
+                                
+                                # Start a new chunk with the headers
+                                current_chunk = []
+                                current_chunk.append(header_text)
+                                current_size = len(header_text)
+                            
+                            # Add the line to the current chunk
+                            current_chunk.append(line)
+                            current_size += line_length
+                        
+                        # Add the last chunk if it has content
+                        if current_chunk:
+                            chunks.append('\n'.join(current_chunk))
                         
                         # Send each chunk as a separate message
-                        for i, chunk in enumerate(output_chunks):
-                            if len(output_chunks) > 1:
-                                chunk_header = f"Part {i+1}/{len(output_chunks)}:\n"
+                        for i, chunk in enumerate(chunks):
+                            if len(chunks) > 1:
+                                chunk_header = f"Part {i+1}/{len(chunks)}:\n"
                                 say(f"```\n{chunk_header}{chunk}\n```")
                             else:
                                 say(f"```\n{chunk}\n```")
@@ -816,13 +856,53 @@ def handle_direct_bridge_list(node, service, say):
             
         # Break the output into chunks if it's too long for Slack
         # Slack has a message size limit of about 4000 characters
-        chunk_size = 3800
-        output_chunks = [output[i:i+chunk_size] for i in range(0, len(output), chunk_size)]
+        # Split by lines first to avoid breaking rows between messages
+        lines = output.split('\n')
+        
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        max_chunk_size = 3800
+        
+        # Determine where the header ends (usually after the table separator line)
+        header_end = 0
+        for i, line in enumerate(lines):
+            if "-" * 10 in line:  # Find the second separator line
+                header_end = i + 2  # Include the line after the separator
+                break
+        
+        # Add headers to first chunk
+        header_lines = lines[:header_end]  # Header lines
+        header_text = '\n'.join(header_lines)
+        current_chunk.append(header_text)
+        current_size = len(header_text)
+        
+        # Process the data rows (everything after headers)
+        for line in lines[header_end:]:
+            line_length = len(line) + 1  # +1 for the newline character
+            
+            # If adding this line would exceed the limit, start a new chunk
+            if current_size + line_length > max_chunk_size:
+                # Save current chunk
+                chunks.append('\n'.join(current_chunk))
+                
+                # Start a new chunk with the headers
+                current_chunk = []
+                current_chunk.append(header_text)
+                current_size = len(header_text)
+            
+            # Add the line to the current chunk
+            current_chunk.append(line)
+            current_size += line_length
+        
+        # Add the last chunk if it has content
+        if current_chunk:
+            chunks.append('\n'.join(current_chunk))
         
         # Send each chunk as a separate message
-        for i, chunk in enumerate(output_chunks):
-            if len(output_chunks) > 1:
-                chunk_header = f"Part {i+1}/{len(output_chunks)}:\n"
+        for i, chunk in enumerate(chunks):
+            if len(chunks) > 1:
+                chunk_header = f"Part {i+1}/{len(chunks)}:\n"
                 say(f"```\n{chunk_header}{chunk}\n```")
             else:
                 say(f"```\n{chunk}\n```")
@@ -961,13 +1041,53 @@ def handle_direct_job_list(node, service, say, status_filter=None):
         
         # Break the output into chunks if it's too long for Slack
         # Slack has a message size limit of about 4000 characters
-        chunk_size = 3800
-        output_chunks = [output[i:i+chunk_size] for i in range(0, len(output), chunk_size)]
+        # Split by lines first to avoid breaking rows between messages
+        lines = output.split('\n')
+        
+        # Determine where the header ends (usually after the table separator line)
+        header_end = 0
+        for i, line in enumerate(lines):
+            if "-" * 10 in line:  # Find the second separator line
+                header_end = i + 2  # Include the line after the separator
+                break
+                
+        chunks = []
+        current_chunk = []
+        current_size = 0
+        max_chunk_size = 3800
+        
+        # Add headers to first chunk
+        header_lines = lines[:header_end]  # Header lines
+        header_text = '\n'.join(header_lines)
+        current_chunk.append(header_text)
+        current_size = len(header_text)
+        
+        # Process the data rows (everything after headers)
+        for line in lines[header_end:]:
+            line_length = len(line) + 1  # +1 for the newline character
+            
+            # If adding this line would exceed the limit, start a new chunk
+            if current_size + line_length > max_chunk_size:
+                # Save current chunk
+                chunks.append('\n'.join(current_chunk))
+                
+                # Start a new chunk with the headers
+                current_chunk = []
+                current_chunk.append(header_text)
+                current_size = len(header_text)
+            
+            # Add the line to the current chunk
+            current_chunk.append(line)
+            current_size += line_length
+        
+        # Add the last chunk if it has content
+        if current_chunk:
+            chunks.append('\n'.join(current_chunk))
         
         # Send each chunk as a separate message
-        for i, chunk in enumerate(output_chunks):
-            if len(output_chunks) > 1:
-                chunk_header = f"Part {i+1}/{len(output_chunks)}:\n"
+        for i, chunk in enumerate(chunks):
+            if len(chunks) > 1:
+                chunk_header = f"Part {i+1}/{len(chunks)}:\n"
                 say(f"```\n{chunk_header}{chunk}\n```")
             else:
                 say(f"```\n{chunk}\n```")

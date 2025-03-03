@@ -32,7 +32,7 @@ services:
 
   # Optional Vault service
   vault:
-    image: vault:latest
+    image: hashicorp/vault:1.15.2
     cap_add:
       - IPC_LOCK
     ports:

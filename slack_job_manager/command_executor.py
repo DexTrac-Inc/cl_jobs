@@ -244,9 +244,16 @@ class CommandExecutor:
                     elif command == "bridge_create":
                         if not args.get("name") or not args.get("url"):
                             return False, "Bridge creation requires both name and URL parameters"
+                        
+                        # There's a mismatch in the bridge_cmd.py create_bridge function
+                        # It has two different implementations with different parameter orders
+                        # We need to adapt to how it's actually called in execute()
                         cmd_args.bridge_command = "create"
                         cmd_args.name = args.get("name")
                         cmd_args.url = args.get("url")
+                        # These are needed for the create_bridge function
+                        cmd_args.confirmations = args.get("confirmations", 0)
+                        cmd_args.min_payment = args.get("min_payment", 0)
                         
                     elif command == "bridge_update":
                         if not args.get("name") or not args.get("url"):
@@ -267,7 +274,25 @@ class CommandExecutor:
                     cmd_args.batch = args.get("batch", False)
                     
                     try:
-                        success = execute_bridge(cmd_args, api)
+                        # Special handling for create bridge command
+                        if command == "bridge_create":
+                            # The command execution is unusual - create_bridge is called directly
+                            # with specific parameter order, not through the Args object
+                            bridge_name = args.get("name")
+                            bridge_url = args.get("url")
+                            confirmations = args.get("confirmations", 0)
+                            min_payment = args.get("min_payment", 0)
+                            
+                            if not bridge_name or not bridge_url:
+                                return False, "Bridge creation requires both name and URL parameters"
+                                
+                            # This accesses the actual create bridge function in bridge_cmd directly
+                            from commands.bridge_cmd import create_bridge as create_bridge_function
+                            logger.info(f"Creating bridge {bridge_name} with URL {bridge_url}")
+                            success = create_bridge_function(api, bridge_name, bridge_url, confirmations, min_payment)
+                        else:
+                            # Normal execution for other bridge commands
+                            success = execute_bridge(cmd_args, api)
                     except AttributeError as e:
                         # Handle cases where a required attribute is missing
                         error_msg = str(e)

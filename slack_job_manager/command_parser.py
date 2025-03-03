@@ -218,15 +218,33 @@ class SlackCommandParser:
             
         # For bridge commands, handle natural language patterns
         elif command.startswith("bridge_"):
-            # Extract bridge name from text
-            bridge_name_match = re.search(r'bridge\s+(?:named|called|named|with name)?\s*["\']?([a-zA-Z0-9_-]+)["\']?', text, re.IGNORECASE)
+            # Extract bridge name from various patterns
+            bridge_name_match = re.search(r'(?:bridge|name|named|called)\s+(?:named|called|with name|with)?\s*["\']?([a-zA-Z0-9_-]+)["\']?', text, re.IGNORECASE)
+            if not bridge_name_match:
+                # Try different pattern structure
+                bridge_name_match = re.search(r'--name\s+([a-zA-Z0-9_-]+)', text, re.IGNORECASE)
+            
+            # Extract name if found
             if bridge_name_match:
                 args["name"] = bridge_name_match.group(1)
             
-            # Extract URL for create/update
-            url_match = re.search(r'(?:url|address|endpoint)\s+["\']?(https?://[^\s"\']+)["\']?', text, re.IGNORECASE)
+            # Extract URL for create/update, with more flexible patterns
+            url_match = re.search(r'(?:url|address|endpoint|at|to)\s+["\']?(https?://[^\s"\']+)["\']?', text, re.IGNORECASE)
+            if not url_match:
+                # Try with explicit flag
+                url_match = re.search(r'--url\s+["\']?(https?://[^\s"\']+)["\']?', text, re.IGNORECASE)
+            
             if url_match:
                 args["url"] = url_match.group(1)
+                
+            # Look for confirmations and min payment if specified
+            confirmations_match = re.search(r'--confirmations\s+(\d+)', text)
+            if confirmations_match:
+                args["confirmations"] = int(confirmations_match.group(1))
+                
+            min_payment_match = re.search(r'--min-payment\s+(\d+)', text)
+            if min_payment_match:
+                args["min_payment"] = int(min_payment_match.group(1))
                 
             # Continue with traditional argument parsing
         

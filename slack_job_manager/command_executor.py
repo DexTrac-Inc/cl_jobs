@@ -65,6 +65,57 @@ class CommandExecutor:
             
         return api
     
+    def execute_bridge_list_command(self, args: Dict[str, Any]) -> Tuple[bool, str]:
+        """
+        Execute the bridge list command directly using the API
+        
+        Args:
+            args: Command arguments with service and node
+            
+        Returns:
+            Tuple of (success, message)
+        """
+        # Initialize the API
+        api = self._initialize_api(args["service"], args["node"])
+        if not api:
+            return False, f"Failed to connect to {args['service']}/{args['node']}"
+            
+        try:
+            # Import the function directly
+            from utils.bridge_ops import get_bridges
+            
+            # Get bridges directly from the API
+            print(f"Getting bridges directly from API for {args['service']}/{args['node']}")
+            bridges = get_bridges(api, log_to_console=False)
+            
+            if not bridges:
+                return True, "❌ No bridges found"
+            
+            # Sort bridges alphabetically by name
+            sorted_bridges = sorted(bridges, key=lambda b: b.get("name", "").lower())
+            
+            # Determine the maximum name length for proper spacing
+            max_name_length = max([len(bridge.get("name", "")) for bridge in sorted_bridges], default=30)
+            # Add padding and ensure it's at least 30 characters
+            column_width = max(max_name_length + 4, 30)
+            
+            # Format the output with bridges information
+            output = f"🔍 Listing bridges on {args['service'].upper()} {args['node'].upper()} ({api.node_url})\n\n"
+            output += f"📋 Found {len(bridges)} bridges:\n"
+            output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+            output += f"{'Name':{column_width}} URL\n"
+            output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+            
+            for bridge in sorted_bridges:
+                name = bridge.get("name", "N/A")
+                url = bridge.get("url", "N/A")
+                output += f"{name:{column_width}} {url}\n"
+                
+            return True, f"```\n{output}\n```"
+        except Exception as e:
+            print(f"Error listing bridges: {e}")
+            return False, f"❌ Error listing bridges: {str(e)}"
+            
     def execute_command(self, command: str, args: Dict[str, Any]) -> Tuple[bool, str]:
         """
         Execute a job manager command
@@ -77,6 +128,11 @@ class CommandExecutor:
             Tuple of (success, message)
         """
         print(f"Executing command: {command} with args: {args}")
+        
+        # Special handling for bridge list command which is prone to parsing issues
+        if command == "bridge_list" and "service" in args and "node" in args:
+            print(f"Using direct API access for bridge_list command")
+            return self.execute_bridge_list_command(args)
         
         # Check for required arguments
         if command not in ["help"]:
@@ -241,49 +297,8 @@ class CommandExecutor:
                     cmd_args.config = "cl_hosts.json"  # Default config file
                     cmd_args.bridges_config = "cl_bridges.json"  # Default bridges config
                     
-                    if command == "bridge_list":
-                        # Skip command args creation completely - we'll handle this directly with the API
-                        cmd_args = None
-                        
-                        try:
-                            # Import directly from utils for better control
-                            from utils.bridge_ops import get_bridges
-                            
-                            # Skip the command execution entirely and call the API directly
-                            logger.info(f"Listing bridges on {args['service'].upper()} {args['node'].upper()} ({api.node_url})")
-                            
-                            # Get all bridges
-                            bridges = get_bridges(api, log_to_console=False)  # Suppress default logging
-                            
-                            if not bridges:
-                                return True, "❌ No bridges found"
-                            
-                            # Sort bridges alphabetically by name
-                            sorted_bridges = sorted(bridges, key=lambda b: b.get("name", "").lower())
-                            
-                            # Determine the maximum name length for proper spacing
-                            max_name_length = max([len(bridge.get("name", "")) for bridge in sorted_bridges], default=30)
-                            # Add padding and ensure it's at least 30 characters
-                            column_width = max(max_name_length + 4, 30)
-                            
-                            # Format the output with bridges information
-                            output = f"🔍 Listing bridges on {args['service'].upper()} {args['node'].upper()} ({api.node_url})\n\n"
-                            output += f"📋 Found {len(bridges)} bridges:\n"
-                            output += "-" * (column_width + 40) + "\n"  # Adjust separator length
-                            output += f"{'Name':{column_width}} URL\n"
-                            output += "-" * (column_width + 40) + "\n"  # Adjust separator length
-                            
-                            for bridge in sorted_bridges:
-                                name = bridge.get("name", "N/A")
-                                url = bridge.get("url", "N/A")
-                                output += f"{name:{column_width}} {url}\n"
-                                
-                            return True, f"```\n{output}\n```"
-                        except Exception as e:
-                            logger.exception(f"Error listing bridges: {e}")
-                            return False, f"❌ Error listing bridges: {str(e)}"
-                        
-                    elif command == "bridge_create":
+                    # Skip the bridge_list command since we're handling it separately
+                    if command == "bridge_create":
                         if not args.get("name") or not args.get("url"):
                             return False, "Bridge creation requires both name and URL parameters"
                         
@@ -326,9 +341,14 @@ class CommandExecutor:
                             min_payment = args.get("min_payment", 0)
                             
                             # Clean up URL if it contains Slack formatting
-                            if bridge_url and '|' in bridge_url:
-                                # Slack formatted URLs can look like https://example.com|example.com
-                                bridge_url = bridge_url.split('|')[0]
+                            if bridge_url:
+                                # Handle Slack piped URLs like https://example.com|example.com
+                                if '|' in bridge_url:
+                                    bridge_url = bridge_url.split('|')[0]
+                                
+                                # Handle Slack angle bracket URLs like <https://example.com>
+                                if bridge_url.startswith('<') and bridge_url.endswith('>'):
+                                    bridge_url = bridge_url[1:-1]
                             
                             if not bridge_name or not bridge_url:
                                 return False, "Bridge creation requires both name and URL parameters"
@@ -358,8 +378,9 @@ class CommandExecutor:
                                 min_payment,
                                 log_to_console=True
                             )
-                        else:
-                            # Normal execution for other bridge commands
+                        elif command != "bridge_list":  # Skip bridge_list completely
+                            # Normal execution for other bridge commands (except bridge_list which is handled directly)
+                            logger.info(f"Using standard execute_bridge for command: {command}")
                             success = execute_bridge(cmd_args, api)
                     except AttributeError as e:
                         # Handle cases where a required attribute is missing

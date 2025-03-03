@@ -254,7 +254,14 @@ class SlackCommandParser:
                 url_match = re.search(r'<(https?://[^>]+)>', text)
             
             if url_match:
-                args["url"] = url_match.group(1)
+                url = url_match.group(1)
+                # Clean URL from angle brackets if present
+                if url.startswith('<') and url.endswith('>'):
+                    url = url[1:-1]
+                # Also remove pipe format if present
+                if '|' in url:
+                    url = url.split('|')[0]
+                args["url"] = url
                 
             # Look for confirmations and min payment if specified
             confirmations_match = re.search(r'--confirmations\s+(\d+)', text)
@@ -312,7 +319,14 @@ class SlackCommandParser:
                     
                 url_match = re.search(r'--url\s+([^\s]+)', arg_str)
                 if url_match:
-                    args['url'] = url_match.group(1)
+                    url = url_match.group(1)
+                    # Clean URL from angle brackets if present
+                    if url.startswith('<') and url.endswith('>'):
+                        url = url[1:-1]
+                    # Also remove pipe format if present
+                    if '|' in url:
+                        url = url.split('|')[0]
+                    args['url'] = url
                 
                 # Handle other arguments as needed
                 confirmations_match = re.search(r'--confirmations\s+(\d+)', arg_str)

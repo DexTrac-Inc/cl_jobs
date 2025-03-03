@@ -5,6 +5,7 @@ import io
 import contextlib
 import importlib
 import json
+import logging
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 
@@ -13,11 +14,14 @@ parent_dir = str(Path(__file__).resolve().parent.parent)
 sys.path.append(parent_dir)
 
 from core.chainlink_api import ChainlinkAPI
-from utils.helpers import load_node_config
+from utils.helpers import load_node_config, setup_logging
 from commands.list_cmd import execute as execute_list
 from commands.cancel_cmd import execute as execute_cancel
 from commands.reapprove_cmd import execute as execute_reapprove
 from commands.bridge_cmd import execute as execute_bridge
+
+# Configure logger
+logger = logging.getLogger("ChainlinkJobManager.command_executor")
 
 
 class CommandExecutor:
@@ -120,10 +124,11 @@ class CommandExecutor:
                     cmd_args.service = args["service"]
                     cmd_args.node = args["node"]
                     cmd_args.name_pattern = args.get("name_pattern")
-                    cmd_args.feed_ids = [args["address"]] if "address" in args else None
+                    cmd_args.feed_ids = [args["address"]] if "address" in args else args.get("feed_ids")
                     cmd_args.feed_ids_file = None
                     cmd_args.execute = True  # Always execute (preview will be shown first)
                     cmd_args.yes = False  # Require confirmation
+                    cmd_args.job_id = args.get("job_id")  # Support for job ID based cancellation
                     
                     success = execute_cancel(cmd_args, api)
                     
@@ -140,8 +145,10 @@ class CommandExecutor:
                     cmd_args = Args()
                     cmd_args.service = args["service"]
                     cmd_args.node = args["node"]
-                    cmd_args.feed_ids = [args["address"]] if "address" in args else None
+                    cmd_args.feed_ids = [args["address"]] if "address" in args else args.get("feed_ids")
                     cmd_args.feed_ids_file = None
+                    cmd_args.name_pattern = args.get("name_pattern")
+                    cmd_args.force = args.get("force", False)
                     cmd_args.execute = True
                     
                     success = execute_reapprove(cmd_args, api)
@@ -159,31 +166,65 @@ class CommandExecutor:
                     cmd_args = Args()
                     cmd_args.service = args["service"]
                     cmd_args.node = args["node"]
+                    cmd_args.config = "cl_hosts.json"  # Default config file
+                    cmd_args.bridges_config = "cl_bridges.json"  # Default bridges config
                     
                     if command == "bridge_list":
                         cmd_args.bridge_command = "list"
                         
                     elif command == "bridge_create":
+                        if not args.get("name") or not args.get("url"):
+                            return False, "Bridge creation requires both name and URL parameters"
                         cmd_args.bridge_command = "create"
                         cmd_args.name = args.get("name")
                         cmd_args.url = args.get("url")
                         
                     elif command == "bridge_update":
+                        if not args.get("name") or not args.get("url"):
+                            return False, "Bridge update requires both name and URL parameters"
                         cmd_args.bridge_command = "update"
                         cmd_args.name = args.get("name")
                         cmd_args.url = args.get("url")
                         
                     elif command == "bridge_delete":
+                        if not args.get("name"):
+                            return False, "Bridge deletion requires a name parameter"
                         cmd_args.bridge_command = "delete"
                         cmd_args.name = args.get("name")
                         cmd_args.execute = True
                     
-                    success = execute_bridge(cmd_args, api)
+                    # Add any additional bridge-specific arguments
+                    cmd_args.group = args.get("group")
+                    cmd_args.batch = args.get("batch", False)
+                    
+                    try:
+                        success = execute_bridge(cmd_args, api)
+                    except AttributeError as e:
+                        # Handle cases where a required attribute is missing
+                        error_msg = str(e)
+                        if "'Args' object has no attribute" in error_msg:
+                            missing_attr = error_msg.split("'")[-2]
+                            return False, f"Missing required parameter: {missing_attr}"
+                        raise e
                     
                 else:
                     return False, f"Unknown command: {command}"
                     
+            except AttributeError as e:
+                # Handle missing attribute errors gracefully
+                error_msg = str(e)
+                if "'Args' object has no attribute" in error_msg:
+                    missing_attr = error_msg.split("'")[-2]
+                    return False, f"Missing required parameter: {missing_attr}. Try adding --{missing_attr} to your command."
+                return False, f"Error executing command: {str(e)}"
+            except ValueError as e:
+                # Handle value errors gracefully
+                return False, f"Invalid value in command: {str(e)}"
             except Exception as e:
+                # Log the full exception for debugging
+                import traceback
+                logger.error(f"Exception executing command: {command}")
+                logger.error(traceback.format_exc())
                 return False, f"Error executing command: {str(e)}"
                 
         # Get the captured output

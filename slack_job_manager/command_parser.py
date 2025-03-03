@@ -117,6 +117,19 @@ class SlackCommandParser:
             return {}
             
         parser = self.parsers[command]
+        args = {}
+        
+        # First check for "on [node] [service]" pattern in all commands
+        on_pattern_match = re.search(r'on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+        if on_pattern_match:
+            # First word after "on" is typically the node, second is the service
+            node = on_pattern_match.group(1)
+            service = on_pattern_match.group(2)
+            args["node"] = node
+            args["service"] = service
+        
+        # Check for inverted format "on [service] [node]" as well - this helps with ambiguity
+        # We might need to adjust this logic based on how users typically phrase commands
         
         # Extract potential arguments with regex based on command
         if command == "cancel" or command == "reapprove":
@@ -130,26 +143,66 @@ class SlackCommandParser:
                 name_pattern_match = re.search(r"'([^']+)'", text)
             name_pattern = name_pattern_match.group(1) if name_pattern_match else None
             
-            # Look for service and node
+            # Look for explicit service and node flags
             service_match = re.search(r'(?:--service|-s)\s+(\w+)', text)
-            service = service_match.group(1) if service_match else None
+            if service_match:
+                args["service"] = service_match.group(1)
             
             node_match = re.search(r'(?:--node|-n)\s+(\w+)', text)
-            node = node_match.group(1) if node_match else None
+            if node_match:
+                args["node"] = node_match.group(1)
             
-            args = {}
-            if service:
-                args["service"] = service
-            if node:
-                args["node"] = node
             if address:
                 args["address"] = address
+                # Also set feed_ids for reapprove to ensure it works
+                if command == "reapprove":
+                    args["feed_ids"] = [address]
+            
             if name_pattern:
                 args["name_pattern"] = name_pattern
                 
+            # If we didn't find service/node via flags or "on" pattern, look for common formats
+            if "service" not in args or "node" not in args:
+                # Try to extract from format like "reapprove job on ethereum bootstrap"
+                service_node_match = re.search(r'(?:on|for|in|from)\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+                if service_node_match:
+                    # Assume first is node, second is service (most common case)
+                    if "node" not in args:
+                        args["node"] = service_node_match.group(1)
+                    if "service" not in args:
+                        args["service"] = service_node_match.group(2)
+            
+            # Validate we have required arguments
+            if not args.get("service") or not args.get("node"):
+                # Try harder - look for any two words that might be service/node
+                words = re.findall(r'\b(\w+)\b', text)
+                # Filter out common words and commands
+                common_words = {'job', 'jobs', 'bridge', 'bridges', 'list', 'show', 'get', 'delete', 'remove', 
+                               'cancel', 'reapprove', 'on', 'for', 'in', 'from', 'the', 'a', 'an'}
+                potential_names = [w for w in words if w.lower() not in common_words]
+                
+                # If we have at least two words that aren't common, use them
+                if len(potential_names) >= 2 and "service" not in args and "node" not in args:
+                    args["node"] = potential_names[0]
+                    args["service"] = potential_names[1]
+                
             return args
             
-        # For other commands, try to parse traditional CLI-style arguments
+        # For bridge commands, handle natural language patterns
+        elif command.startswith("bridge_"):
+            # Extract bridge name from text
+            bridge_name_match = re.search(r'bridge\s+(?:named|called|named|with name)?\s*["\']?([a-zA-Z0-9_-]+)["\']?', text, re.IGNORECASE)
+            if bridge_name_match:
+                args["name"] = bridge_name_match.group(1)
+            
+            # Extract URL for create/update
+            url_match = re.search(r'(?:url|address|endpoint)\s+["\']?(https?://[^\s"\']+)["\']?', text, re.IGNORECASE)
+            if url_match:
+                args["url"] = url_match.group(1)
+                
+            # Continue with traditional argument parsing
+        
+        # For all commands, also try traditional CLI-style arguments
         try:
             # Get everything after the command name
             arg_str = ""
@@ -168,10 +221,21 @@ class SlackCommandParser:
                 tokens = arg_str.split()
                 
             # Parse with appropriate parser
-            args, _ = parser.parse_known_args(tokens)
-            return vars(args)
+            try:
+                parsed_args, _ = parser.parse_known_args(tokens)
+                # Update our args dictionary with parsed args, preserving any values we found via regex
+                for key, value in vars(parsed_args).items():
+                    if value is not None and (key not in args or args[key] is None):
+                        args[key] = value
+            except Exception:
+                # If parsing fails, we'll rely on the regex-based extraction
+                pass
+                
         except Exception:
-            return {}
+            # If there's any error in CLI-style parsing, still return what we found via regex
+            pass
+            
+        return args
     
     def get_help_text(self, command: str = None) -> str:
         """Get help text for commands"""

@@ -1085,6 +1085,8 @@ def handle_direct_job_reapprove(addresses, node, service, say):
             
         # Keep track of all jobs to reapprove across all feeds managers
         all_jobs_to_reapprove = []
+        all_matched_feed_ids = set()
+        all_matched_patterns = set()
         
         # Find matching jobs
         for fm in feeds_managers:
@@ -1094,13 +1096,17 @@ def handle_direct_job_reapprove(addresses, node, service, say):
             
             # Find jobs matching the criteria
             from commands.reapprove_cmd import get_jobs_to_reapprove
-            jobs_to_reapprove = get_jobs_to_reapprove(
+            jobs_to_reapprove, matched_feed_ids, matched_patterns = get_jobs_to_reapprove(
                 jobs, feed_ids, patterns, None
             )
             
-            # Add feeds manager name to each job
-            for job in jobs_to_reapprove:
-                job['feeds_manager'] = fm.get('name', 'Unknown')
+            # Update our sets of matched IDs and patterns
+            all_matched_feed_ids.update(matched_feed_ids)
+            all_matched_patterns.update(matched_patterns)
+            
+            # Add feeds manager name to each job dictionary
+            for job_dict in jobs_to_reapprove:
+                job_dict['feeds_manager'] = fm.get('name', 'Unknown')
                 
             all_jobs_to_reapprove.extend(jobs_to_reapprove)
         
@@ -1115,17 +1121,17 @@ def handle_direct_job_reapprove(addresses, node, service, say):
         output += f"{'Spec ID':<15} {'Name':<30} {'Status':<20} {'Feeds Manager':<15}\n"
         output += "-" * 80 + "\n"
         
-        for job in all_jobs_to_reapprove:
-            spec_id = job['spec_id']
-            job_name = job['name']
-            status = job['status']
+        for job_dict in all_jobs_to_reapprove:
+            spec_id = job_dict['spec_id']
+            job_name = job_dict['name']
+            status = job_dict['status']
             
             # Truncate long job names
             if len(job_name) > 27:
                 job_name = job_name[:24] + "..."
                 
             # Get feeds manager name
-            fm_name = job.get('feeds_manager', 'N/A')
+            fm_name = job_dict.get('feeds_manager', 'N/A')
             if len(fm_name) > 12:
                 fm_name = fm_name[:9] + "..."
                     
@@ -1138,18 +1144,18 @@ def handle_direct_job_reapprove(addresses, node, service, say):
         successful = 0
         failed = 0
         
-        for job in all_jobs_to_reapprove:
+        for job_dict in all_jobs_to_reapprove:
             try:
-                output += f"⏳ Reapproving job spec ID: {job['spec_id']} ({job['name']})\n"
+                output += f"⏳ Reapproving job spec ID: {job_dict['spec_id']} ({job_dict['name']})\n"
                 # Use the ChainlinkAPI directly to approve the job
-                if api.approve_job(job['spec_id'], force=True):
-                    output += f"✅ Reapproved job: {job['name']}\n"
+                if api.approve_job(job_dict['spec_id'], force=True):
+                    output += f"✅ Reapproved job: {job_dict['name']}\n"
                     successful += 1
                 else:
-                    output += f"❌ Failed to reapprove job: {job['name']}\n"
+                    output += f"❌ Failed to reapprove job: {job_dict['name']}\n"
                     failed += 1
             except Exception as e:
-                output += f"❌ Exception when approving job {job['spec_id']}: {str(e)}\n"
+                output += f"❌ Exception when approving job {job_dict['spec_id']}: {str(e)}\n"
                 failed += 1
         
         # Show results

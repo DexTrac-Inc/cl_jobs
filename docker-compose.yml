@@ -44,5 +44,18 @@ services:
       - vault-data:/vault/data
     command: server -dev -dev-root-token-id=dev-only-token
 
+  # Vault client for interacting with secrets
+  vault-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.vault-client
+    volumes:
+      - ./.env:/app/.env:ro
+    environment:
+      - VAULT_ADDR=http://vault:8200
+      - VAULT_TOKEN=${VAULT_TOKEN}
+    depends_on:
+      - vault
+
 volumes:
   vault-data:

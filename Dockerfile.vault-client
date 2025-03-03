@@ -3,10 +3,10 @@ FROM python:3.9-slim
 WORKDIR /app
 
 # Install dependencies
-RUN pip install --no-cache-dir hvac
+RUN pip install --no-cache-dir hvac python-dotenv
 
 COPY vault-client.py /app/
-COPY .env /app/
+# .env will be mounted via volume
 
 # Set entrypoint
 ENTRYPOINT ["python", "vault-client.py"]

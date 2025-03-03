@@ -242,13 +242,18 @@ class CommandExecutor:
                     cmd_args.bridges_config = "cl_bridges.json"  # Default bridges config
                     
                     if command == "bridge_list":
-                        # Get bridges directly from the API rather than using command execution
-                        from utils.bridge_ops import get_bridges
-                        logger.info(f"Listing bridges on {args['service'].upper()} {args['node'].upper()} ({api.node_url})")
+                        # Skip command args creation completely - we'll handle this directly with the API
+                        cmd_args = None
                         
                         try:
-                            # Get bridges directly
-                            bridges = get_bridges(api, log_to_console=True)
+                            # Import directly from utils for better control
+                            from utils.bridge_ops import get_bridges
+                            
+                            # Skip the command execution entirely and call the API directly
+                            logger.info(f"Listing bridges on {args['service'].upper()} {args['node'].upper()} ({api.node_url})")
+                            
+                            # Get all bridges
+                            bridges = get_bridges(api, log_to_console=False)  # Suppress default logging
                             
                             if not bridges:
                                 return True, "❌ No bridges found"

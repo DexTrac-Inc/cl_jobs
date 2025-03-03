@@ -7,9 +7,62 @@ import random
 import logging
 from functools import wraps
 from requests.exceptions import RequestException, SSLError
+from logging.handlers import RotatingFileHandler
 
 # Configure logger - use child logger of main application
 logger = logging.getLogger("ChainlinkJobManager.helpers")
+
+def setup_logging(logger_name, log_file=None, level=logging.INFO):
+    """
+    Set up logging configuration
+    
+    Parameters:
+    - logger_name: Name for the logger
+    - log_file: File to write logs to (optional)
+    - level: Logging level (default: INFO)
+    
+    Returns:
+    - Configured logger
+    """
+    # Create logger
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(level)
+    
+    # Create formatter
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    # Create file handler if log file is specified
+    if log_file:
+        file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5)
+        file_handler.setLevel(level)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    
+    return logger
+
+def load_node_config(config_file="cl_hosts.json"):
+    """
+    Load node configuration from cl_hosts.json
+    
+    Parameters:
+    - config_file: Path to the configuration file
+    
+    Returns:
+    - Dictionary with node configuration or None if error
+    """
+    try:
+        with open(config_file, "r") as file:
+            config = json.load(file)
+        return config
+    except Exception as e:
+        logger.error(f"Failed to load node configuration: {str(e)}")
+        return None
 
 def retry_on_connection_error(max_retries=2, base_delay=3, max_delay=5):
     """

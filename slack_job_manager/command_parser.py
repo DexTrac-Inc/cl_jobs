@@ -230,11 +230,14 @@ class SlackCommandParser:
                 args["node"] = node
                 args["service"] = service
             
-            # Extract bridge name from various patterns
-            bridge_name_match = re.search(r'(?:bridge|name|named|called)\s+(?:named|called|with name|with)?\s*["\']?([a-zA-Z0-9_-]+)["\']?', text, re.IGNORECASE)
+            # Extract bridge name from various patterns, using more precise matching
+            bridge_name_match = re.search(r'(?:with\s+name|name)\s+([a-zA-Z0-9_-]+)', text, re.IGNORECASE)
             if not bridge_name_match:
-                # Try different pattern structure
+                # Try explicit flag format
                 bridge_name_match = re.search(r'--name\s+([a-zA-Z0-9_-]+)', text, re.IGNORECASE)
+            if not bridge_name_match:
+                # Try name preceded by quotes or other markers
+                bridge_name_match = re.search(r'["\']([a-zA-Z0-9_-]+)["\']', text, re.IGNORECASE)
             
             # Extract name if found
             if bridge_name_match:
@@ -291,6 +294,37 @@ class SlackCommandParser:
                     arg_str = text[start:].strip()
                     break
             
+            # Before splitting, check for command line style arguments
+            if '--service' in arg_str and '--node' in arg_str:
+                print(f"Detected CLI-style arguments: {arg_str}")
+                # Extract explicit arguments directly to avoid issues with shlex
+                name_match = re.search(r'--name\s+([^\s]+)', arg_str)
+                if name_match:
+                    args['name'] = name_match.group(1)
+                
+                service_match = re.search(r'--service\s+([^\s]+)', arg_str)
+                if service_match:
+                    args['service'] = service_match.group(1)
+                    
+                node_match = re.search(r'--node\s+([^\s]+)', arg_str)
+                if node_match:
+                    args['node'] = node_match.group(1)
+                    
+                url_match = re.search(r'--url\s+([^\s]+)', arg_str)
+                if url_match:
+                    args['url'] = url_match.group(1)
+                
+                # Handle other arguments as needed
+                confirmations_match = re.search(r'--confirmations\s+(\d+)', arg_str)
+                if confirmations_match:
+                    args['confirmations'] = int(confirmations_match.group(1))
+                
+                payment_match = re.search(r'--payment\s+([^\s]+)', arg_str)
+                if payment_match:
+                    args['payment'] = payment_match.group(1)
+                    
+                print(f"Extracted CLI arguments: {args}")
+                    
             # Split into tokens respecting quotes
             try:
                 tokens = shlex.split(arg_str)

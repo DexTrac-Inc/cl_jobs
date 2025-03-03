@@ -242,7 +242,41 @@ class CommandExecutor:
                     cmd_args.bridges_config = "cl_bridges.json"  # Default bridges config
                     
                     if command == "bridge_list":
-                        cmd_args.bridge_command = "list"
+                        # Get bridges directly from the API rather than using command execution
+                        from utils.bridge_ops import get_bridges
+                        logger.info(f"Listing bridges on {args['service'].upper()} {args['node'].upper()} ({api.node_url})")
+                        
+                        try:
+                            # Get bridges directly
+                            bridges = get_bridges(api, log_to_console=True)
+                            
+                            if not bridges:
+                                return True, "❌ No bridges found"
+                            
+                            # Sort bridges alphabetically by name
+                            sorted_bridges = sorted(bridges, key=lambda b: b.get("name", "").lower())
+                            
+                            # Determine the maximum name length for proper spacing
+                            max_name_length = max([len(bridge.get("name", "")) for bridge in sorted_bridges], default=30)
+                            # Add padding and ensure it's at least 30 characters
+                            column_width = max(max_name_length + 4, 30)
+                            
+                            # Format the output with bridges information
+                            output = f"🔍 Listing bridges on {args['service'].upper()} {args['node'].upper()} ({api.node_url})\n\n"
+                            output += f"📋 Found {len(bridges)} bridges:\n"
+                            output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+                            output += f"{'Name':{column_width}} URL\n"
+                            output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+                            
+                            for bridge in sorted_bridges:
+                                name = bridge.get("name", "N/A")
+                                url = bridge.get("url", "N/A")
+                                output += f"{name:{column_width}} {url}\n"
+                                
+                            return True, f"```\n{output}\n```"
+                        except Exception as e:
+                            logger.exception(f"Error listing bridges: {e}")
+                            return False, f"❌ Error listing bridges: {str(e)}"
                         
                     elif command == "bridge_create":
                         if not args.get("name") or not args.get("url"):
@@ -299,6 +333,16 @@ class CommandExecutor:
                             
                             # Log what we're doing with full details
                             logger.info(f"Creating bridge '{bridge_name}' on {args['service'].upper()} {args['node'].upper()} with URL {bridge_url}")
+                            
+                            # First check if this bridge already exists
+                            from utils.bridge_ops import get_bridge
+                            existing_bridge = get_bridge(api, bridge_name)
+                            if existing_bridge:
+                                logger.info(f"Bridge '{bridge_name}' already exists with URL: {existing_bridge.get('url')}")
+                                if existing_bridge.get('url') != bridge_url:
+                                    logger.info(f"Updating URL from '{existing_bridge.get('url')}' to '{bridge_url}'")
+                                else:
+                                    return True, f"✅ Bridge '{bridge_name}' already exists with URL {bridge_url}"
                             
                             # Call the API directly instead of through command execution
                             success = create_bridge_function(

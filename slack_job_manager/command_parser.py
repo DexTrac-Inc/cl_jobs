@@ -98,6 +98,7 @@ class SlackCommandParser:
         # Check for command pattern matches
         for cmd, pattern in self.COMMAND_PATTERNS.items():
             if re.search(pattern, text, re.IGNORECASE):
+                print(f"Detected command: {cmd} from text: {text}")
                 return cmd
                 
         return None
@@ -113,7 +114,9 @@ class SlackCommandParser:
         Returns:
             Dictionary of parsed arguments
         """
+        print(f"Parsing arguments for command: {command}, text: {text}")
         if command not in self.parsers:
+            print(f"Command {command} not found in parsers")
             return {}
             
         parser = self.parsers[command]
@@ -221,8 +224,11 @@ class SlackCommandParser:
             # Extract service and node from "on [node] [service]" pattern first
             on_pattern_match = re.search(r'on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
             if on_pattern_match:
-                args["node"] = on_pattern_match.group(1)
-                args["service"] = on_pattern_match.group(2)
+                node = on_pattern_match.group(1)
+                service = on_pattern_match.group(2)
+                print(f"Found service/node in 'on' pattern: node={node}, service={service}")
+                args["node"] = node
+                args["service"] = service
             
             # Extract bridge name from various patterns
             bridge_name_match = re.search(r'(?:bridge|name|named|called)\s+(?:named|called|with name|with)?\s*["\']?([a-zA-Z0-9_-]+)["\']?', text, re.IGNORECASE)
@@ -261,11 +267,16 @@ class SlackCommandParser:
                 # Try to extract from format like "bridge on ethereum ocr"
                 service_node_match = re.search(r'(?:on|for|in|from)\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
                 if service_node_match:
+                    node = service_node_match.group(1)
+                    service = service_node_match.group(2)
+                    print(f"Found service/node in fallback pattern: node={node}, service={service}")
                     # If we find a match, set the missing values
                     if "node" not in args:
-                        args["node"] = service_node_match.group(1)
+                        args["node"] = node
                     if "service" not in args:
-                        args["service"] = service_node_match.group(2)
+                        args["service"] = service
+                        
+            print(f"Final args after natural language processing: {args}")
                         
             # Continue with traditional argument parsing
         

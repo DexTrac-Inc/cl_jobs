@@ -76,10 +76,13 @@ class CommandExecutor:
         Returns:
             Tuple of (success, message)
         """
+        print(f"Executing command: {command} with args: {args}")
+        
         # Check for required arguments
         if command not in ["help"]:
             # Most commands require service and node
             if "service" not in args or "node" not in args:
+                print(f"Missing required arguments. Command: {command}, Args: {args}")
                 return False, "Missing required arguments. Service and node are required."
         
         # Capture stdout to return as message
@@ -291,10 +294,21 @@ class CommandExecutor:
                             if not bridge_name or not bridge_url:
                                 return False, "Bridge creation requires both name and URL parameters"
                                 
-                            # This accesses the actual create bridge function in utils/bridge_ops.py which is more robust
+                            # Use the direct bridge_ops create_bridge function which gives us more control
                             from utils.bridge_ops import create_bridge as create_bridge_function
-                            logger.info(f"Creating bridge {bridge_name} with URL {bridge_url}")
-                            success = create_bridge_function(api, bridge_name, bridge_url, confirmations, min_payment)
+                            
+                            # Log what we're doing with full details
+                            logger.info(f"Creating bridge '{bridge_name}' on {args['service'].upper()} {args['node'].upper()} with URL {bridge_url}")
+                            
+                            # Call the API directly instead of through command execution
+                            success = create_bridge_function(
+                                api, 
+                                bridge_name,  # Pass the explicit bridge name
+                                bridge_url, 
+                                confirmations, 
+                                min_payment,
+                                log_to_console=True
+                            )
                         else:
                             # Normal execution for other bridge commands
                             success = execute_bridge(cmd_args, api)

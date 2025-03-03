@@ -218,6 +218,12 @@ class SlackCommandParser:
             
         # For bridge commands, handle natural language patterns
         elif command.startswith("bridge_"):
+            # Extract service and node from "on [node] [service]" pattern first
+            on_pattern_match = re.search(r'on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+            if on_pattern_match:
+                args["node"] = on_pattern_match.group(1)
+                args["service"] = on_pattern_match.group(2)
+            
             # Extract bridge name from various patterns
             bridge_name_match = re.search(r'(?:bridge|name|named|called)\s+(?:named|called|with name|with)?\s*["\']?([a-zA-Z0-9_-]+)["\']?', text, re.IGNORECASE)
             if not bridge_name_match:
@@ -250,6 +256,17 @@ class SlackCommandParser:
             if min_payment_match:
                 args["min_payment"] = int(min_payment_match.group(1))
                 
+            # If we still don't have service/node, try to extract from other parts of the command
+            if "service" not in args or "node" not in args:
+                # Try to extract from format like "bridge on ethereum ocr"
+                service_node_match = re.search(r'(?:on|for|in|from)\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+                if service_node_match:
+                    # If we find a match, set the missing values
+                    if "node" not in args:
+                        args["node"] = service_node_match.group(1)
+                    if "service" not in args:
+                        args["service"] = service_node_match.group(2)
+                        
             # Continue with traditional argument parsing
         
         # For all commands, also try traditional CLI-style arguments

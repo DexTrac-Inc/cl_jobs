@@ -1,0 +1,47 @@
+version: '3'
+
+services:
+  cl_jobs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    command: ["--help"]  # Replace with actual command when running
+
+  slack_manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.slack
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    environment:
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      - SLACK_AUTHORIZED_USERS=${SLACK_AUTHORIZED_USERS}
+      - EMAIL=${EMAIL}
+      - PASSWORD_0=${PASSWORD_0}
+      - PASSWORD_1=${PASSWORD_1}
+      # Add additional environment variables as needed
+
+  # Optional Vault service
+  vault:
+    image: vault:latest
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "8200:8200"
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=dev-only-token
+    volumes:
+      - vault-data:/vault/data
+    command: server -dev -dev-root-token-id=dev-only-token
+
+volumes:
+  vault-data:

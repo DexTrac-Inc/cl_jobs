@@ -844,19 +844,19 @@ def handle_direct_job_list(node, service, say):
             return
             
         # Sort jobs by name (default)
-        sorted_jobs = sorted(all_jobs, key=lambda j: j.get("attributes", {}).get("name", "").lower())
+        sorted_jobs = sorted(all_jobs, key=lambda j: j.get("name", "").lower())
         
         # Count job statuses
-        approved_count = sum(1 for j in sorted_jobs if j.get("attributes", {}).get("status") == "APPROVED")
-        pending_count = sum(1 for j in sorted_jobs if j.get("attributes", {}).get("status") == "PENDING")
-        cancelled_count = sum(1 for j in sorted_jobs if j.get("attributes", {}).get("status") == "CANCELLED")
+        approved_count = sum(1 for j in sorted_jobs if j.get("status") == "APPROVED")
+        pending_count = sum(1 for j in sorted_jobs if j.get("status") == "PENDING")
+        cancelled_count = sum(1 for j in sorted_jobs if j.get("status") == "CANCELLED")
         total = len(sorted_jobs)
         
         # Add summary at the top
         output += f"\n📋 Found {total} jobs ({approved_count} approved, {pending_count} pending, {cancelled_count} cancelled):\n"
         
         # Determine column widths based on content
-        name_width = max([len(j.get("attributes", {}).get("name", "")) for j in sorted_jobs] + [4], default=30)
+        name_width = max([len(j.get("name", "")) for j in sorted_jobs] + [4], default=30)
         name_width = max(name_width + 4, 35)  # Ensure minimum width
         id_width = 10
         status_width = 12
@@ -869,11 +869,10 @@ def handle_direct_job_list(node, service, say):
         
         # Table content
         for job in sorted_jobs:
-            attrs = job.get("attributes", {})
-            name = attrs.get("name", "N/A")
-            job_id = attrs.get("id", "N/A")
-            status = attrs.get("status", "N/A")
-            has_updates = "Yes" if attrs.get("proposeUpdatesJobSpec") else "No"
+            name = job.get("name", "N/A")
+            job_id = job.get("id", "N/A")
+            status = job.get("status", "N/A")
+            has_updates = "Yes" if job.get("pendingUpdate") else "No"
             
             # Color-code status if possible
             status_str = status
@@ -885,6 +884,12 @@ def handle_direct_job_list(node, service, say):
                 status_str = "❌ CANCELLED"
             
             output += f"{name:{name_width}} {job_id:{id_width}} {status_str:{status_width}} {has_updates:{update_width}}\n"
+            
+            # For debugging - add contract address if it can be extracted from the name
+            # import re
+            # contract_match = re.search(r"contract\s+(0x[a-fA-F0-9]{40})", name)
+            # if contract_match:
+            #    output += f"  Contract: {contract_match.group(1)}\n"
         
         # Send the formatted output with code block formatting for monospace
         say(f"```\n{output}\n```")

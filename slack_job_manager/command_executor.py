@@ -125,21 +125,34 @@ class CommandExecutor:
                     cmd_args.node = args["node"]
                     cmd_args.name_pattern = args.get("name_pattern")
                     
-                    # Handle feed IDs correctly - this is critical for address matching
-                    if "address" in args:
-                        cmd_args.feed_ids = [args["address"]]
-                    elif "feed_ids" in args:
-                        if isinstance(args["feed_ids"], list):
-                            cmd_args.feed_ids = args["feed_ids"]
-                        else:
-                            # Handle case where feed_ids might be a single string
-                            cmd_args.feed_ids = [args["feed_ids"]]
+                    # Special handling for contract addresses in job cancellation
+                    # This addresses an issue where the standard get_jobs_to_cancel function
+                    # might not match addresses correctly in all cases
+                    if "address" in args or "feed_ids" in args:
+                        # Create a custom name pattern that explicitly targets the contract address format
+                        # This is more reliable than the default substring matching
+                        address = args.get("address")
+                        if address:
+                            # Create a name pattern that matches "contract <address>" format
+                            # The \s+contract\s+ pattern captures the common format in job names
+                            cmd_args.name_pattern = f"contract {address}"
+                            logger.info(f"Using custom name pattern for address: {cmd_args.name_pattern}")
+                        
+                        # Also set feed_ids to maintain compatibility with the original logic
+                        if "address" in args:
+                            cmd_args.feed_ids = [args["address"]]
+                        elif "feed_ids" in args:
+                            if isinstance(args["feed_ids"], list):
+                                cmd_args.feed_ids = args["feed_ids"]
+                            else:
+                                # Handle case where feed_ids might be a single string
+                                cmd_args.feed_ids = [args["feed_ids"]]
                     else:
                         cmd_args.feed_ids = None
                     
                     cmd_args.feed_ids_file = None
                     cmd_args.execute = args.get("execute", True)  # Default to execute for Slack
-                    cmd_args.yes = args.get("yes", False)  # Require confirmation by default
+                    cmd_args.yes = True  # Auto-confirm for Slack interface for better UX
                     
                     # Handle job_id if provided
                     if "job_id" in args:
@@ -173,20 +186,31 @@ class CommandExecutor:
                     cmd_args.service = args["service"]
                     cmd_args.node = args["node"]
                     
-                    # Handle feed IDs correctly - this is critical for address matching
-                    if "address" in args:
-                        cmd_args.feed_ids = [args["address"]]
-                    elif "feed_ids" in args:
-                        if isinstance(args["feed_ids"], list):
-                            cmd_args.feed_ids = args["feed_ids"]
-                        else:
-                            # Handle case where feed_ids might be a single string
-                            cmd_args.feed_ids = [args["feed_ids"]]
+                    # Special handling for addresses in job reapproval, similar to cancel
+                    if "address" in args or "feed_ids" in args:
+                        # Use a name pattern that specifically targets contract addresses in job names
+                        address = args.get("address")
+                        if address:
+                            # Create a name pattern that matches the "contract <address>" format
+                            cmd_args.name_pattern = f"contract {address}"
+                            logger.info(f"Using custom name pattern for address: {cmd_args.name_pattern}")
+                        
+                        # Also set feed_ids to maintain compatibility with the original logic
+                        if "address" in args:
+                            cmd_args.feed_ids = [args["address"]]
+                        elif "feed_ids" in args:
+                            if isinstance(args["feed_ids"], list):
+                                cmd_args.feed_ids = args["feed_ids"]
+                            else:
+                                # Handle case where feed_ids might be a single string
+                                cmd_args.feed_ids = [args["feed_ids"]]
                     else:
                         cmd_args.feed_ids = None
                         
                     cmd_args.feed_ids_file = None
-                    cmd_args.name_pattern = args.get("name_pattern")
+                    # Only override name_pattern if not already set
+                    if not cmd_args.name_pattern:
+                        cmd_args.name_pattern = args.get("name_pattern")
                     cmd_args.force = args.get("force", False)
                     cmd_args.execute = args.get("execute", True)  # Default to execute for Slack
                     

@@ -353,6 +353,7 @@ def handle_message(message, say):
                 # Direct implementation for each bridge command type
                 if command == "bridge_list":
                     # Direct implementation for bridge list command
+                    logger.info(f"Using direct implementation for natural language bridge create")
                     logger.info(f"Using direct implementation for natural language bridge list")
                     
                     try:
@@ -406,57 +407,46 @@ def handle_message(message, say):
                         column_width = max(max_name_length + 4, 30)
                         
                         # Format the output
-                        output = f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n\n"
-                        output += f"📋 Found {len(bridges)} bridges:\n"
-                        output += "-" * (column_width + 40) + "\n"  # Adjust separator length
-                        output += f"{'Name':{column_width}} URL\n"
-                        output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+                        status_info = f"✅ Authentication successful for {api.node_url}\n"
+                        status_info += f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n"
+                        status_info += f"\n📋 Found {len(bridges)} bridges:\n"
                         
+                        # Create the table header
+                        table_header = "-" * (column_width + 40) + "\n"  # Separator line
+                        table_header += f"{'Name':{column_width}} URL\n"
+                        table_header += "-" * (column_width + 40) + "\n"  # Separator line
+                        
+                        # Create table rows
+                        table_rows = []
                         for bridge in sorted_bridges:
                             name = bridge.get("name", "N/A")
                             url = bridge.get("url", "N/A")
-                            output += f"{name:{column_width}} {url}\n"
-                            
-                        # Break the output into chunks if it's too long for Slack
-                        # Slack has a message size limit of about 4000 characters
-                        # Split by lines first to avoid breaking rows between messages
-                        lines = output.split('\n')
+                            table_rows.append(f"{name:{column_width}} {url}")
                         
-                        chunks = []
-                        current_chunk = []
-                        current_size = 0
+                        # Break the output into chunks for Slack (max ~4000 chars)
                         max_chunk_size = 3800
+                        chunks = []
                         
-                        # Determine where the header ends (usually after the table separator line)
-                        header_end = 0
-                        for i, line in enumerate(lines):
-                            if "-" * 10 in line:  # Find the second separator line
-                                header_end = i + 2  # Include the line after the separator
-                                break
+                        # First chunk includes status info and table header
+                        current_chunk = [status_info]
+                        current_chunk.append(table_header)
+                        current_size = len(status_info) + len(table_header)
                         
-                        # Add headers to first chunk
-                        header_lines = lines[:header_end]  # Header lines
-                        header_text = '\n'.join(header_lines)
-                        current_chunk.append(header_text)
-                        current_size = len(header_text)
-                        
-                        # Process the data rows (everything after headers)
-                        for line in lines[header_end:]:
-                            line_length = len(line) + 1  # +1 for the newline character
+                        for row in table_rows:
+                            row_length = len(row) + 1  # +1 for newline
                             
-                            # If adding this line would exceed the limit, start a new chunk
-                            if current_size + line_length > max_chunk_size:
+                            # If adding this row would exceed the limit, start a new chunk
+                            if current_size + row_length > max_chunk_size:
                                 # Save current chunk
                                 chunks.append('\n'.join(current_chunk))
                                 
-                                # Start a new chunk with the headers
-                                current_chunk = []
-                                current_chunk.append(header_text)
-                                current_size = len(header_text)
+                                # Start a new chunk with ONLY the table header (no status info)
+                                current_chunk = [table_header]
+                                current_size = len(table_header)
                             
-                            # Add the line to the current chunk
-                            current_chunk.append(line)
-                            current_size += line_length
+                            # Add the row to the current chunk
+                            current_chunk.append(row)
+                            current_size += row_length
                         
                         # Add the last chunk if it has content
                         if current_chunk:
@@ -475,10 +465,6 @@ def handle_message(message, say):
                         logger.exception(f"Error in direct bridge list implementation: {e}")
                         say(f"❌ Error listing bridges: {str(e)}")
                         return
-                        
-                elif command == "bridge_create" and "name" in args and "url" in args:
-                    # Direct implementation for bridge create command
-                    logger.info(f"Using direct implementation for natural language bridge create")
                 
                 try:
                     # Get parameters from the args
@@ -814,6 +800,7 @@ def get_chainlink_api(node, service, say):
         say(f"❌ Error connecting to node: {str(e)}")
         return None
 
+def handle_direct_bridge_delete(bridge_name, node, service, say):
 def handle_direct_bridge_list(node, service, say):
     """Handle direct bridge list command"""
     try:
@@ -823,16 +810,16 @@ def handle_direct_bridge_list(node, service, say):
             return
             
         # Start with detailed log output
-        output = f"✅ Authentication successful for {api.node_url}\n"
-        output += f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n"
+        status_info = f"✅ Authentication successful for {api.node_url}\n"
+        status_info += f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n"
         
         # Get bridges
         from commands.bridge_cmd import get_all_bridges
         bridges = get_all_bridges(api)
         
         if not bridges:
-            output += "❌ No bridges found"
-            say(f"```\n{output}\n```")
+            status_info += "❌ No bridges found"
+            say(f"```\n{status_info}\n```")
             return
             
         # Sort bridges alphabetically by name
@@ -843,57 +830,45 @@ def handle_direct_bridge_list(node, service, say):
         # Add padding and ensure it's at least 30 characters
         column_width = max(max_name_length + 4, 30)
         
-        # Format the output
-        output += f"\n📋 Found {len(bridges)} bridges:\n"
-        output += "-" * (column_width + 40) + "\n"  # Adjust separator length
-        output += f"{'Name':{column_width}} URL\n"
-        output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+        # Add the bridge count to status info
+        status_info += f"\n📋 Found {len(bridges)} bridges:\n"
         
+        # Create the table header
+        table_header = "-" * (column_width + 40) + "\n"  # Separator line
+        table_header += f"{'Name':{column_width}} URL\n"
+        table_header += "-" * (column_width + 40) + "\n"  # Separator line
+        
+        # Create table rows
+        table_rows = []
         for bridge in sorted_bridges:
             name = bridge.get("name", "N/A")
             url = bridge.get("url", "N/A")
-            output += f"{name:{column_width}} {url}\n"
-            
-        # Break the output into chunks if it's too long for Slack
-        # Slack has a message size limit of about 4000 characters
-        # Split by lines first to avoid breaking rows between messages
-        lines = output.split('\n')
+            table_rows.append(f"{name:{column_width}} {url}")
         
-        chunks = []
-        current_chunk = []
-        current_size = 0
+        # Break the output into chunks for Slack (max ~4000 chars)
         max_chunk_size = 3800
+        chunks = []
         
-        # Determine where the header ends (usually after the table separator line)
-        header_end = 0
-        for i, line in enumerate(lines):
-            if "-" * 10 in line:  # Find the second separator line
-                header_end = i + 2  # Include the line after the separator
-                break
+        # First chunk includes status info and table header
+        current_chunk = [status_info]
+        current_chunk.append(table_header)
+        current_size = len(status_info) + len(table_header)
         
-        # Add headers to first chunk
-        header_lines = lines[:header_end]  # Header lines
-        header_text = '\n'.join(header_lines)
-        current_chunk.append(header_text)
-        current_size = len(header_text)
-        
-        # Process the data rows (everything after headers)
-        for line in lines[header_end:]:
-            line_length = len(line) + 1  # +1 for the newline character
+        for row in table_rows:
+            row_length = len(row) + 1  # +1 for newline
             
-            # If adding this line would exceed the limit, start a new chunk
-            if current_size + line_length > max_chunk_size:
+            # If adding this row would exceed the limit, start a new chunk
+            if current_size + row_length > max_chunk_size:
                 # Save current chunk
                 chunks.append('\n'.join(current_chunk))
                 
-                # Start a new chunk with the headers
-                current_chunk = []
-                current_chunk.append(header_text)
-                current_size = len(header_text)
+                # Start a new chunk with ONLY the table header (no status info)
+                current_chunk = [table_header]
+                current_size = len(table_header)
             
-            # Add the line to the current chunk
-            current_chunk.append(line)
-            current_size += line_length
+            # Add the row to the current chunk
+            current_chunk.append(row)
+            current_size += row_length
         
         # Add the last chunk if it has content
         if current_chunk:
@@ -909,8 +884,6 @@ def handle_direct_bridge_list(node, service, say):
     except Exception as e:
         logger.exception(f"Error listing bridges: {e}")
         say(f"❌ Error listing bridges: {str(e)}")
-
-def handle_direct_bridge_delete(bridge_name, node, service, say):
     """Handle direct bridge delete command"""
     try:
         # Initialize API
@@ -951,6 +924,7 @@ def handle_direct_bridge_delete(bridge_name, node, service, say):
         logger.exception(f"Error deleting bridge: {e}")
         say(f"❌ Error deleting bridge: {str(e)}")
 
+def handle_direct_job_cancel(addresses, node, service, say):
 def handle_direct_job_list(node, service, say, status_filter=None):
     """Handle direct job list command with optional status filtering"""
     try:
@@ -961,17 +935,17 @@ def handle_direct_job_list(node, service, say, status_filter=None):
             
         # Start with detailed log output but using plain text instead of emoji
         # to avoid formatting issues in Slack
-        output = f"Authentication successful for {api.node_url}\n"
+        status_info = f"Authentication successful for {api.node_url}\n"
         if status_filter:
-            output += f"Listing {status_filter.lower()} jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
+            status_info += f"Listing {status_filter.lower()} jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
         else:
-            output += f"Listing all jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
+            status_info += f"Listing all jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
         
         # Get all feeds managers
         feeds_managers = api.get_all_feeds_managers()
         if not feeds_managers:
-            output += "No feeds managers found"
-            say(f"```\n{output}\n```")
+            status_info += "No feeds managers found"
+            say(f"```\n{status_info}\n```")
             return
             
         # Get all jobs from all feeds managers
@@ -984,8 +958,8 @@ def handle_direct_job_list(node, service, say, status_filter=None):
                 all_jobs.append(job)
                 
         if not all_jobs:
-            output += "No jobs found"
-            say(f"```\n{output}\n```")
+            status_info += "No jobs found"
+            say(f"```\n{status_info}\n```")
             return
             
         # Filter jobs by status if requested
@@ -1005,9 +979,11 @@ def handle_direct_job_list(node, service, say, status_filter=None):
         
         # Add summary at the top (without emoji to avoid formatting issues)
         if status_filter:
-            output += f"\nFound {total} {status_filter.lower()} jobs:\n"
+            job_summary = f"\nFound {total} {status_filter.lower()} jobs:\n"
         else:
-            output += f"\nFound {total} jobs ({approved_count} approved, {pending_count} pending, {cancelled_count} cancelled):\n"
+            job_summary = f"\nFound {total} jobs ({approved_count} approved, {pending_count} pending, {cancelled_count} cancelled):\n"
+        
+        status_info += job_summary
         
         # Determine column widths based on content
         name_width = max([len(j.get("name", "")) for j in sorted_jobs] + [4], default=30)
@@ -1017,11 +993,12 @@ def handle_direct_job_list(node, service, say, status_filter=None):
         update_width = 10
         
         # Table header
-        output += "-" * (name_width + id_width + status_width + update_width + 10) + "\n"
-        output += f"{'Name':{name_width}} {'ID':{id_width}} {'Status':{status_width}} {'Updates':{update_width}}\n"
-        output += "-" * (name_width + id_width + status_width + update_width + 10) + "\n"
+        table_header = "-" * (name_width + id_width + status_width + update_width + 10) + "\n"
+        table_header += f"{'Name':{name_width}} {'ID':{id_width}} {'Status':{status_width}} {'Updates':{update_width}}\n"
+        table_header += "-" * (name_width + id_width + status_width + update_width + 10) + "\n"
         
-        # Table content
+        # Create table rows
+        table_rows = []
         for job in sorted_jobs:
             name = job.get("name", "N/A")
             job_id = job.get("id", "N/A")
@@ -1031,54 +1008,33 @@ def handle_direct_job_list(node, service, say, status_filter=None):
             # Use plaintext status to avoid formatting issues in Slack
             status_str = status
             
-            output += f"{name:{name_width}} {job_id:{id_width}} {status_str:{status_width}} {has_updates:{update_width}}\n"
-            
-            # For debugging - add contract address if it can be extracted from the name
-            # import re
-            # contract_match = re.search(r"contract\s+(0x[a-fA-F0-9]{40})", name)
-            # if contract_match:
-            #    output += f"  Contract: {contract_match.group(1)}\n"
+            row = f"{name:{name_width}} {job_id:{id_width}} {status_str:{status_width}} {has_updates:{update_width}}"
+            table_rows.append(row)
         
-        # Break the output into chunks if it's too long for Slack
-        # Slack has a message size limit of about 4000 characters
-        # Split by lines first to avoid breaking rows between messages
-        lines = output.split('\n')
-        
-        # Determine where the header ends (usually after the table separator line)
-        header_end = 0
-        for i, line in enumerate(lines):
-            if "-" * 10 in line:  # Find the second separator line
-                header_end = i + 2  # Include the line after the separator
-                break
-                
-        chunks = []
-        current_chunk = []
-        current_size = 0
+        # Break the output into chunks for Slack (max ~4000 chars)
         max_chunk_size = 3800
+        chunks = []
         
-        # Add headers to first chunk
-        header_lines = lines[:header_end]  # Header lines
-        header_text = '\n'.join(header_lines)
-        current_chunk.append(header_text)
-        current_size = len(header_text)
+        # First chunk includes status info and table header
+        current_chunk = [status_info]
+        current_chunk.append(table_header)
+        current_size = len(status_info) + len(table_header)
         
-        # Process the data rows (everything after headers)
-        for line in lines[header_end:]:
-            line_length = len(line) + 1  # +1 for the newline character
+        for row in table_rows:
+            row_length = len(row) + 1  # +1 for newline
             
-            # If adding this line would exceed the limit, start a new chunk
-            if current_size + line_length > max_chunk_size:
+            # If adding this row would exceed the limit, start a new chunk
+            if current_size + row_length > max_chunk_size:
                 # Save current chunk
                 chunks.append('\n'.join(current_chunk))
                 
-                # Start a new chunk with the headers
-                current_chunk = []
-                current_chunk.append(header_text)
-                current_size = len(header_text)
+                # Start a new chunk with ONLY the table header (no status info)
+                current_chunk = [table_header]
+                current_size = len(table_header)
             
-            # Add the line to the current chunk
-            current_chunk.append(line)
-            current_size += line_length
+            # Add the row to the current chunk
+            current_chunk.append(row)
+            current_size += row_length
         
         # Add the last chunk if it has content
         if current_chunk:
@@ -1094,8 +1050,6 @@ def handle_direct_job_list(node, service, say, status_filter=None):
     except Exception as e:
         logger.exception(f"Error listing jobs: {e}")
         say(f"❌ Error listing jobs: {str(e)}")
-
-def handle_direct_job_cancel(addresses, node, service, say):
     """Handle direct job cancellation command with multiple addresses"""
     try:
         # Initialize API

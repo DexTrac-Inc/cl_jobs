@@ -89,20 +89,8 @@ def load_hosts():
                 url = details["url"]
                 password_index = details.get("password", 0)
                 
-                # First try to get password from Vault
-                password = None
-                if vault_client.is_available():
-                    credentials = vault_client.get_chainlink_credentials(network)
-                    if credentials:
-                        logger.debug(f"Retrieved credentials from Vault for {network}")
-                        if f'password_{password_index}' in credentials:
-                            password = credentials.get(f'password_{password_index}')
-                        elif 'password_0' in credentials:
-                            password = credentials.get('password_0')
-                
-                # Fallback to environment variables if needed
-                if not password:
-                    password = os.getenv(f"PASSWORD_{password_index}")
+                # Get password from environment variables
+                password = os.getenv(f"PASSWORD_{password_index}")
                 
                 hosts.append((service.upper(), network.upper(), url, password, details))
 

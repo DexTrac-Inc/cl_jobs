@@ -166,12 +166,12 @@ class CommandExecutor:
                     print(f"DEBUG: Password not found for index {password_index}")
                     return False, f"Password not available for {service}/{node}"
                 
-                # Initialize API
-                api = ChainlinkAPI(node_url, self.email)
+                # Initialize API with all required parameters
+                api = ChainlinkAPI(node_url, self.email, password)
                 print(f"DEBUG: Initialized API for {node_url}")
                 
-                # Authenticate
-                if not api.authenticate(password):
+                # Authenticate (password is already set in constructor)
+                if not api.authenticate():
                     print(f"DEBUG: Authentication failed for {service}/{node}")
                     return False, f"Authentication failed for {service}/{node}"
                 print(f"DEBUG: Authentication successful for {service}/{node}")

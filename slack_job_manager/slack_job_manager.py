@@ -254,6 +254,86 @@ def handle_message(message, say):
             say(help_text)
             return
             
+        # SPECIAL HANDLING FOR BRIDGE COMMANDS WITH NATURAL LANGUAGE
+        if command.startswith("bridge_") and "node" in args and "service" in args:
+            # Check for natural language bridge commands with the "on node service" pattern
+            natural_language_pattern = re.search(r'on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+            
+            if natural_language_pattern and command == "bridge_list":
+                # Direct implementation for bridge list command
+                logger.info(f"Using direct implementation for natural language bridge list")
+                
+                try:
+                    # Get the node and service from the args
+                    node = args["node"]
+                    service = args["service"]
+                    
+                    # Load configuration
+                    config = load_node_config()
+                    if not config or "services" not in config or service not in config["services"] or node not in config["services"][service]:
+                        say(f"❌ Configuration not found for {service}/{node}")
+                        return
+                        
+                    node_config = config["services"][service][node]
+                    node_url = node_config.get("url")
+                    password_index = node_config.get("password", 0)
+                    
+                    if not node_url:
+                        say(f"❌ URL not found for {service}/{node}")
+                        return
+                        
+                    # Get password
+                    password = os.environ.get(f"PASSWORD_{password_index}")
+                    if not password:
+                        say(f"❌ Password not available for {service}/{node}")
+                        return
+                        
+                    # Initialize ChainlinkAPI
+                    from core.chainlink_api import ChainlinkAPI
+                    api = ChainlinkAPI(node_url, os.environ.get("EMAIL"), password)
+                    
+                    # Authenticate
+                    if not api.authenticate():
+                        say(f"❌ Authentication failed for {service}/{node}")
+                        return
+                        
+                    # Get bridges
+                    from commands.bridge_cmd import get_all_bridges
+                    bridges = get_all_bridges(api)
+                    
+                    if not bridges:
+                        say("❌ No bridges found")
+                        return
+                        
+                    # Sort bridges alphabetically by name
+                    sorted_bridges = sorted(bridges, key=lambda b: b.get("name", "").lower())
+                    
+                    # Determine the maximum name length for proper spacing
+                    max_name_length = max([len(bridge.get("name", "")) for bridge in sorted_bridges], default=30)
+                    # Add padding and ensure it's at least 30 characters
+                    column_width = max(max_name_length + 4, 30)
+                    
+                    # Format the output
+                    output = f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n\n"
+                    output += f"📋 Found {len(bridges)} bridges:\n"
+                    output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+                    output += f"{'Name':{column_width}} URL\n"
+                    output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+                    
+                    for bridge in sorted_bridges:
+                        name = bridge.get("name", "N/A")
+                        url = bridge.get("url", "N/A")
+                        output += f"{name:{column_width}} {url}\n"
+                        
+                    # Send the formatted output
+                    say(f"```\n{output}\n```")
+                    return
+                    
+                except Exception as e:
+                    logger.exception(f"Error in direct bridge list implementation: {e}")
+                    say(f"❌ Error listing bridges: {str(e)}")
+                    return
+        
         # DEBUGGING
         logger.info(f"About to execute command: {command} with args: {args}")
         

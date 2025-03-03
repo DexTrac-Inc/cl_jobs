@@ -1,0 +1,22 @@
+[Unit]
+Description=Chainlink Slack Job Manager
+After=network.target
+
+[Service]
+Type=simple
+User=<your_username>
+WorkingDirectory=<path_to_cl_jobs>
+ExecStart=<path_to_cl_jobs>/venv/bin/python3 <path_to_cl_jobs>/slack_job_manager/slack_job_manager.py
+Restart=always
+RestartSec=30
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=slack_job_manager
+Environment=PYTHONUNBUFFERED=1
+# Uncomment and set if not using .env file
+#Environment=SLACK_BOT_TOKEN=xoxb-your-token-here
+#Environment=SLACK_APP_TOKEN=xapp-your-token-here
+#Environment=SLACK_AUTHORIZED_USERS=U01234567,U89012345
+
+[Install]
+WantedBy=multi-user.target

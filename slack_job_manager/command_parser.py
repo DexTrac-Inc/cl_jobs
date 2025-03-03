@@ -238,6 +238,12 @@ class SlackCommandParser:
             if not bridge_name_match:
                 # Try name preceded by quotes or other markers
                 bridge_name_match = re.search(r'["\']([a-zA-Z0-9_-]+)["\']', text, re.IGNORECASE)
+                
+            # Additional pattern specifically for delete: "delete bridge [name]"
+            if not bridge_name_match and command == "bridge_delete":
+                delete_name_match = re.search(r'delete\s+bridge\s+([a-zA-Z0-9_-]+)', text, re.IGNORECASE)
+                if delete_name_match:
+                    bridge_name_match = delete_name_match
             
             # Extract name if found
             if bridge_name_match:

@@ -241,7 +241,43 @@ def handle_message(message, say):
             say("❌ You are not authorized to use Chainlink commands. Please contact an administrator.")
         return
     
-    # 1. First try to parse as a structured command
+    # DIRECT NATURAL LANGUAGE BRIDGE COMMANDS - completely bypass the command parser
+    # Check for specific patterns first
+    list_bridges_match = re.search(r'list\s+bridges\s+on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+    if list_bridges_match:
+        logger.info(f"Detected natural language bridge list command directly")
+        node = list_bridges_match.group(1)
+        service = list_bridges_match.group(2)
+        handle_direct_bridge_list(node, service, say)
+        return
+        
+    delete_bridge_match = re.search(r'delete\s+bridge\s+([a-zA-Z0-9_-]+)\s+on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+    if delete_bridge_match:
+        logger.info(f"Detected natural language bridge delete command directly")
+        bridge_name = delete_bridge_match.group(1)
+        node = delete_bridge_match.group(2)
+        service = delete_bridge_match.group(3)
+        handle_direct_bridge_delete(bridge_name, node, service, say)
+        return
+        
+    create_bridge_match = re.search(r'create\s+bridge\s+on\s+(\w+)\s+(\w+)\s+with\s+name\s+([a-zA-Z0-9_-]+)\s+and\s+url\s+<?([^>\s]+)>?', text, re.IGNORECASE)
+    if create_bridge_match:
+        logger.info(f"Detected natural language bridge create command directly")
+        node = create_bridge_match.group(1)
+        service = create_bridge_match.group(2)
+        bridge_name = create_bridge_match.group(3)
+        bridge_url = create_bridge_match.group(4)
+        
+        # Clean URL
+        if bridge_url.startswith('<') and bridge_url.endswith('>'):
+            bridge_url = bridge_url[1:-1]
+        if '|' in bridge_url:
+            bridge_url = bridge_url.split('|')[0]
+            
+        handle_direct_bridge_create(bridge_name, bridge_url, node, service, say)
+        return
+    
+    # 1. If no direct natural language match, try to parse as a structured command
     command = command_parser.detect_command(text)
     
     if command:
@@ -256,17 +292,104 @@ def handle_message(message, say):
             
         # SPECIAL HANDLING FOR BRIDGE COMMANDS WITH NATURAL LANGUAGE
         if command.startswith("bridge_") and "node" in args and "service" in args:
-            # Check for natural language bridge commands with the "on node service" pattern
-            natural_language_pattern = re.search(r'on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
+            logger.info(f"Checking for natural language bridge command: {command}, {text}")
             
-            if natural_language_pattern and command == "bridge_list":
-                # Direct implementation for bridge list command
-                logger.info(f"Using direct implementation for natural language bridge list")
+            # Check for natural language bridge pattern in text
+            if "on" in text.lower() and re.search(r'\b(tron|ocr|bootstrap|ethereum|polygon|arbitrum|optimism|base|avax|bsc)\b', text, re.IGNORECASE):
+                logger.info(f"Detected natural language bridge command '{command}' with node/service")
+                
+                # Direct implementation for each bridge command type
+                if command == "bridge_list":
+                    # Direct implementation for bridge list command
+                    logger.info(f"Using direct implementation for natural language bridge list")
+                    
+                    try:
+                        # Get the node and service from the args
+                        node = args["node"]
+                        service = args["service"]
+                        
+                        # Load configuration
+                        config = load_node_config()
+                        if not config or "services" not in config or service not in config["services"] or node not in config["services"][service]:
+                            say(f"❌ Configuration not found for {service}/{node}")
+                            return
+                            
+                        node_config = config["services"][service][node]
+                        node_url = node_config.get("url")
+                        password_index = node_config.get("password", 0)
+                        
+                        if not node_url:
+                            say(f"❌ URL not found for {service}/{node}")
+                            return
+                            
+                        # Get password
+                        password = os.environ.get(f"PASSWORD_{password_index}")
+                        if not password:
+                            say(f"❌ Password not available for {service}/{node}")
+                            return
+                            
+                        # Initialize ChainlinkAPI
+                        from core.chainlink_api import ChainlinkAPI
+                        api = ChainlinkAPI(node_url, os.environ.get("EMAIL"), password)
+                        
+                        # Authenticate
+                        if not api.authenticate():
+                            say(f"❌ Authentication failed for {service}/{node}")
+                            return
+                            
+                        # Get bridges
+                        from commands.bridge_cmd import get_all_bridges
+                        bridges = get_all_bridges(api)
+                        
+                        if not bridges:
+                            say("❌ No bridges found")
+                            return
+                            
+                        # Sort bridges alphabetically by name
+                        sorted_bridges = sorted(bridges, key=lambda b: b.get("name", "").lower())
+                        
+                        # Determine the maximum name length for proper spacing
+                        max_name_length = max([len(bridge.get("name", "")) for bridge in sorted_bridges], default=30)
+                        # Add padding and ensure it's at least 30 characters
+                        column_width = max(max_name_length + 4, 30)
+                        
+                        # Format the output
+                        output = f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n\n"
+                        output += f"📋 Found {len(bridges)} bridges:\n"
+                        output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+                        output += f"{'Name':{column_width}} URL\n"
+                        output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+                        
+                        for bridge in sorted_bridges:
+                            name = bridge.get("name", "N/A")
+                            url = bridge.get("url", "N/A")
+                            output += f"{name:{column_width}} {url}\n"
+                            
+                        # Send the formatted output
+                        say(f"```\n{output}\n```")
+                        return
+                        
+                    except Exception as e:
+                        logger.exception(f"Error in direct bridge list implementation: {e}")
+                        say(f"❌ Error listing bridges: {str(e)}")
+                        return
+                        
+                elif command == "bridge_create" and "name" in args and "url" in args:
+                    # Direct implementation for bridge create command
+                    logger.info(f"Using direct implementation for natural language bridge create")
                 
                 try:
-                    # Get the node and service from the args
+                    # Get parameters from the args
                     node = args["node"]
                     service = args["service"]
+                    bridge_name = args["name"]
+                    bridge_url = args["url"]
+                    
+                    # Handle URL formatting
+                    if bridge_url.startswith('<') and bridge_url.endswith('>'):
+                        bridge_url = bridge_url[1:-1]
+                    if '|' in bridge_url:
+                        bridge_url = bridge_url.split('|')[0]
                     
                     # Load configuration
                     config = load_node_config()
@@ -297,41 +420,117 @@ def handle_message(message, say):
                         say(f"❌ Authentication failed for {service}/{node}")
                         return
                         
-                    # Get bridges
-                    from commands.bridge_cmd import get_all_bridges
-                    bridges = get_all_bridges(api)
+                    # Check if bridge exists
+                    from commands.bridge_cmd import get_bridge
+                    existing_bridge = get_bridge(api, bridge_name)
                     
-                    if not bridges:
-                        say("❌ No bridges found")
-                        return
+                    # Create bridge data
+                    bridge_data = {
+                        "name": bridge_name,
+                        "url": bridge_url,
+                        "minimumContractPayment": "0",
+                        "confirmations": 0
+                    }
+                    
+                    if existing_bridge:
+                        # Check if update is needed
+                        if existing_bridge.get('url') != bridge_url:
+                            # Update bridge
+                            response = api.session.patch(
+                                f"{api.node_url}/v2/bridge_types/{bridge_name}",
+                                json=bridge_data,
+                                verify=False
+                            )
+                            
+                            if response.status_code == 200:
+                                say(f"✅ Bridge '{bridge_name}' updated successfully from {existing_bridge.get('url')} to {bridge_url}")
+                            else:
+                                say(f"❌ Failed to update bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}")
+                        else:
+                            say(f"✅ Bridge '{bridge_name}' already exists with correct URL: {bridge_url}")
+                    else:
+                        # Create bridge
+                        response = api.session.post(
+                            f"{api.node_url}/v2/bridge_types",
+                            json=bridge_data,
+                            verify=False
+                        )
                         
-                    # Sort bridges alphabetically by name
-                    sorted_bridges = sorted(bridges, key=lambda b: b.get("name", "").lower())
+                        if response.status_code in [200, 201]:
+                            say(f"✅ Bridge '{bridge_name}' created successfully with URL: {bridge_url}")
+                        else:
+                            say(f"❌ Failed to create bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}")
                     
-                    # Determine the maximum name length for proper spacing
-                    max_name_length = max([len(bridge.get("name", "")) for bridge in sorted_bridges], default=30)
-                    # Add padding and ensure it's at least 30 characters
-                    column_width = max(max_name_length + 4, 30)
-                    
-                    # Format the output
-                    output = f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n\n"
-                    output += f"📋 Found {len(bridges)} bridges:\n"
-                    output += "-" * (column_width + 40) + "\n"  # Adjust separator length
-                    output += f"{'Name':{column_width}} URL\n"
-                    output += "-" * (column_width + 40) + "\n"  # Adjust separator length
-                    
-                    for bridge in sorted_bridges:
-                        name = bridge.get("name", "N/A")
-                        url = bridge.get("url", "N/A")
-                        output += f"{name:{column_width}} {url}\n"
-                        
-                    # Send the formatted output
-                    say(f"```\n{output}\n```")
                     return
                     
                 except Exception as e:
-                    logger.exception(f"Error in direct bridge list implementation: {e}")
-                    say(f"❌ Error listing bridges: {str(e)}")
+                    logger.exception(f"Error in direct bridge create implementation: {e}")
+                    say(f"❌ Error creating bridge: {str(e)}")
+                    return
+                    
+            elif command == "bridge_delete" and "name" in args:
+                # Direct implementation for bridge delete command
+                logger.info(f"Using direct implementation for natural language bridge delete")
+                
+                try:
+                    # Get parameters from the args
+                    node = args["node"]
+                    service = args["service"]
+                    bridge_name = args["name"]
+                    
+                    # Load configuration
+                    config = load_node_config()
+                    if not config or "services" not in config or service not in config["services"] or node not in config["services"][service]:
+                        say(f"❌ Configuration not found for {service}/{node}")
+                        return
+                        
+                    node_config = config["services"][service][node]
+                    node_url = node_config.get("url")
+                    password_index = node_config.get("password", 0)
+                    
+                    if not node_url:
+                        say(f"❌ URL not found for {service}/{node}")
+                        return
+                        
+                    # Get password
+                    password = os.environ.get(f"PASSWORD_{password_index}")
+                    if not password:
+                        say(f"❌ Password not available for {service}/{node}")
+                        return
+                        
+                    # Initialize ChainlinkAPI
+                    from core.chainlink_api import ChainlinkAPI
+                    api = ChainlinkAPI(node_url, os.environ.get("EMAIL"), password)
+                    
+                    # Authenticate
+                    if not api.authenticate():
+                        say(f"❌ Authentication failed for {service}/{node}")
+                        return
+                        
+                    # Check if bridge exists
+                    from commands.bridge_cmd import get_bridge
+                    existing_bridge = get_bridge(api, bridge_name)
+                    
+                    if not existing_bridge:
+                        say(f"❌ Bridge '{bridge_name}' does not exist")
+                        return
+                    
+                    # Delete bridge
+                    response = api.session.delete(
+                        f"{api.node_url}/v2/bridge_types/{bridge_name}",
+                        verify=False
+                    )
+                    
+                    if response.status_code == 200:
+                        say(f"✅ Bridge '{bridge_name}' deleted successfully")
+                    else:
+                        say(f"❌ Failed to delete bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}")
+                    
+                    return
+                    
+                except Exception as e:
+                    logger.exception(f"Error in direct bridge delete implementation: {e}")
+                    say(f"❌ Error deleting bridge: {str(e)}")
                     return
         
         # DEBUGGING
@@ -472,6 +671,170 @@ def handle_deletion_cancellation(ack, say):
     """Handle cancellation of job deletion"""
     ack()
     say("✅ Job deletion cancelled.")
+
+
+# Direct handlers for natural language bridge commands
+def get_chainlink_api(node, service, say):
+    """Initialize ChainlinkAPI for the specified node and service"""
+    try:
+        # Load configuration
+        config = load_node_config()
+        if not config or "services" not in config or service not in config["services"] or node not in config["services"][service]:
+            say(f"❌ Configuration not found for {service}/{node}")
+            return None
+            
+        node_config = config["services"][service][node]
+        node_url = node_config.get("url")
+        password_index = node_config.get("password", 0)
+        
+        if not node_url:
+            say(f"❌ URL not found for {service}/{node}")
+            return None
+            
+        # Get password
+        password = os.environ.get(f"PASSWORD_{password_index}")
+        if not password:
+            say(f"❌ Password not available for {service}/{node}")
+            return None
+            
+        # Initialize ChainlinkAPI
+        from core.chainlink_api import ChainlinkAPI
+        api = ChainlinkAPI(node_url, os.environ.get("EMAIL"), password)
+        
+        # Authenticate
+        if not api.authenticate():
+            say(f"❌ Authentication failed for {service}/{node}")
+            return None
+            
+        return api
+    except Exception as e:
+        logger.exception(f"Error initializing ChainlinkAPI: {e}")
+        say(f"❌ Error connecting to node: {str(e)}")
+        return None
+
+def handle_direct_bridge_list(node, service, say):
+    """Handle direct bridge list command"""
+    try:
+        # Initialize API
+        api = get_chainlink_api(node, service, say)
+        if not api:
+            return
+            
+        # Get bridges
+        from commands.bridge_cmd import get_all_bridges
+        bridges = get_all_bridges(api)
+        
+        if not bridges:
+            say("❌ No bridges found")
+            return
+            
+        # Sort bridges alphabetically by name
+        sorted_bridges = sorted(bridges, key=lambda b: b.get("name", "").lower())
+        
+        # Determine the maximum name length for proper spacing
+        max_name_length = max([len(bridge.get("name", "")) for bridge in sorted_bridges], default=30)
+        # Add padding and ensure it's at least 30 characters
+        column_width = max(max_name_length + 4, 30)
+        
+        # Format the output
+        output = f"🔍 Listing bridges on {service.upper()} {node.upper()} ({api.node_url})\n\n"
+        output += f"📋 Found {len(bridges)} bridges:\n"
+        output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+        output += f"{'Name':{column_width}} URL\n"
+        output += "-" * (column_width + 40) + "\n"  # Adjust separator length
+        
+        for bridge in sorted_bridges:
+            name = bridge.get("name", "N/A")
+            url = bridge.get("url", "N/A")
+            output += f"{name:{column_width}} {url}\n"
+            
+        # Send the formatted output
+        say(f"```\n{output}\n```")
+    except Exception as e:
+        logger.exception(f"Error listing bridges: {e}")
+        say(f"❌ Error listing bridges: {str(e)}")
+
+def handle_direct_bridge_delete(bridge_name, node, service, say):
+    """Handle direct bridge delete command"""
+    try:
+        # Initialize API
+        api = get_chainlink_api(node, service, say)
+        if not api:
+            return
+            
+        # Check if bridge exists
+        from commands.bridge_cmd import get_bridge
+        existing_bridge = get_bridge(api, bridge_name)
+        
+        if not existing_bridge:
+            say(f"❌ Bridge '{bridge_name}' does not exist")
+            return
+        
+        # Delete bridge
+        response = api.session.delete(
+            f"{api.node_url}/v2/bridge_types/{bridge_name}",
+            verify=False
+        )
+        
+        if response.status_code == 200:
+            say(f"✅ Bridge '{bridge_name}' deleted successfully")
+        else:
+            say(f"❌ Failed to delete bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}")
+    except Exception as e:
+        logger.exception(f"Error deleting bridge: {e}")
+        say(f"❌ Error deleting bridge: {str(e)}")
+
+def handle_direct_bridge_create(bridge_name, bridge_url, node, service, say):
+    """Handle direct bridge create command"""
+    try:
+        # Initialize API
+        api = get_chainlink_api(node, service, say)
+        if not api:
+            return
+            
+        # Check if bridge exists
+        from commands.bridge_cmd import get_bridge
+        existing_bridge = get_bridge(api, bridge_name)
+        
+        # Create bridge data
+        bridge_data = {
+            "name": bridge_name,
+            "url": bridge_url,
+            "minimumContractPayment": "0",
+            "confirmations": 0
+        }
+        
+        if existing_bridge:
+            # Check if update is needed
+            if existing_bridge.get('url') != bridge_url:
+                # Update bridge
+                response = api.session.patch(
+                    f"{api.node_url}/v2/bridge_types/{bridge_name}",
+                    json=bridge_data,
+                    verify=False
+                )
+                
+                if response.status_code == 200:
+                    say(f"✅ Bridge '{bridge_name}' updated successfully from {existing_bridge.get('url')} to {bridge_url}")
+                else:
+                    say(f"❌ Failed to update bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}")
+            else:
+                say(f"✅ Bridge '{bridge_name}' already exists with correct URL: {bridge_url}")
+        else:
+            # Create bridge
+            response = api.session.post(
+                f"{api.node_url}/v2/bridge_types",
+                json=bridge_data,
+                verify=False
+            )
+            
+            if response.status_code in [200, 201]:
+                say(f"✅ Bridge '{bridge_name}' created successfully with URL: {bridge_url}")
+            else:
+                say(f"❌ Failed to create bridge '{bridge_name}', status code: {response.status_code}\nResponse: {response.text}")
+    except Exception as e:
+        logger.exception(f"Error creating bridge: {e}")
+        say(f"❌ Error creating bridge: {str(e)}")
 
 
 if __name__ == "__main__":

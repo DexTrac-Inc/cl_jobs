@@ -1098,6 +1098,10 @@ def handle_direct_job_reapprove(addresses, node, service, say):
                 jobs, feed_ids, patterns, None
             )
             
+            # Add feeds manager name to each job
+            for job in jobs_to_reapprove:
+                job['feeds_manager'] = fm.get('name', 'Unknown')
+                
             all_jobs_to_reapprove.extend(jobs_to_reapprove)
         
         if not all_jobs_to_reapprove:
@@ -1130,9 +1134,23 @@ def handle_direct_job_reapprove(addresses, node, service, say):
         # Reapprove the jobs
         output += f"\n🔄 Reapproving jobs...\n"
         
-        # Call the reapprove_jobs function
-        from commands.reapprove_cmd import reapprove_jobs
-        successful, failed = reapprove_jobs(api, all_jobs_to_reapprove)
+        # Reapprove each job directly since the reapprove_jobs function expects a specific format
+        successful = 0
+        failed = 0
+        
+        for job in all_jobs_to_reapprove:
+            try:
+                output += f"⏳ Reapproving job spec ID: {job['spec_id']} ({job['name']})\n"
+                # Use the ChainlinkAPI directly to approve the job
+                if api.approve_job(job['spec_id'], force=True):
+                    output += f"✅ Reapproved job: {job['name']}\n"
+                    successful += 1
+                else:
+                    output += f"❌ Failed to reapprove job: {job['name']}\n"
+                    failed += 1
+            except Exception as e:
+                output += f"❌ Exception when approving job {job['spec_id']}: {str(e)}\n"
+                failed += 1
         
         # Show results
         output += f"\n{'='*60}\n"

@@ -829,17 +829,18 @@ def handle_direct_job_list(node, service, say, status_filter=None):
         if not api:
             return
             
-        # Start with detailed log output
-        output = f"✅ Authentication successful for {api.node_url}\n"
+        # Start with detailed log output but using plain text instead of emoji
+        # to avoid formatting issues in Slack
+        output = f"Authentication successful for {api.node_url}\n"
         if status_filter:
-            output += f"🔍 Listing {status_filter.lower()} jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
+            output += f"Listing {status_filter.lower()} jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
         else:
-            output += f"🔍 Listing all jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
+            output += f"Listing all jobs on {service.upper()} {node.upper()} ({api.node_url})\n"
         
         # Get all feeds managers
         feeds_managers = api.get_all_feeds_managers()
         if not feeds_managers:
-            output += "❌ No feeds managers found"
+            output += "No feeds managers found"
             say(f"```\n{output}\n```")
             return
             
@@ -853,7 +854,7 @@ def handle_direct_job_list(node, service, say, status_filter=None):
                 all_jobs.append(job)
                 
         if not all_jobs:
-            output += "❌ No jobs found"
+            output += "No jobs found"
             say(f"```\n{output}\n```")
             return
             
@@ -872,11 +873,11 @@ def handle_direct_job_list(node, service, say, status_filter=None):
         cancelled_count = sum(1 for j in filtered_jobs if j.get("status") == "CANCELLED")
         total = len(filtered_jobs)
         
-        # Add summary at the top
+        # Add summary at the top (without emoji to avoid formatting issues)
         if status_filter:
-            output += f"\n📋 Found {total} {status_filter.lower()} jobs:\n"
+            output += f"\nFound {total} {status_filter.lower()} jobs:\n"
         else:
-            output += f"\n📋 Found {total} jobs ({approved_count} approved, {pending_count} pending, {cancelled_count} cancelled):\n"
+            output += f"\nFound {total} jobs ({approved_count} approved, {pending_count} pending, {cancelled_count} cancelled):\n"
         
         # Determine column widths based on content
         name_width = max([len(j.get("name", "")) for j in sorted_jobs] + [4], default=30)
@@ -897,14 +898,8 @@ def handle_direct_job_list(node, service, say, status_filter=None):
             status = job.get("status", "N/A")
             has_updates = "Yes" if job.get("pendingUpdate") else "No"
             
-            # Color-code status if possible
+            # Use plaintext status to avoid formatting issues in Slack
             status_str = status
-            if status == "APPROVED":
-                status_str = "✅ APPROVED"
-            elif status == "PENDING":
-                status_str = "⏳ PENDING"
-            elif status == "CANCELLED":
-                status_str = "❌ CANCELLED"
             
             output += f"{name:{name_width}} {job_id:{id_width}} {status_str:{status_width}} {has_updates:{update_width}}\n"
             
@@ -914,8 +909,18 @@ def handle_direct_job_list(node, service, say, status_filter=None):
             # if contract_match:
             #    output += f"  Contract: {contract_match.group(1)}\n"
         
-        # Send the formatted output with code block formatting for monospace
-        say(f"```\n{output}\n```")
+        # Break the output into chunks if it's too long for Slack
+        # Slack has a message size limit of about 4000 characters
+        chunk_size = 3800
+        output_chunks = [output[i:i+chunk_size] for i in range(0, len(output), chunk_size)]
+        
+        # Send each chunk as a separate message
+        for i, chunk in enumerate(output_chunks):
+            if len(output_chunks) > 1:
+                chunk_header = f"Part {i+1}/{len(output_chunks)}:\n"
+                say(f"```\n{chunk_header}{chunk}\n```")
+            else:
+                say(f"```\n{chunk}\n```")
     except Exception as e:
         logger.exception(f"Error listing jobs: {e}")
         say(f"❌ Error listing jobs: {str(e)}")

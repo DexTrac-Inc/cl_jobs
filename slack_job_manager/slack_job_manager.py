@@ -1038,9 +1038,23 @@ def handle_direct_job_cancel(addresses, node, service, say):
         # Cancel the jobs
         output += f"\n🔄 Cancelling jobs...\n"
         
-        # Call the cancel_jobs function
-        from commands.cancel_cmd import cancel_jobs
-        successful, failed = cancel_jobs(api, all_jobs_to_cancel)
+        # Cancel each job with detailed logs
+        successful = 0
+        failed = 0
+        
+        for job_id, job_name, identifier, match_reason in all_jobs_to_cancel:
+            try:
+                output += f"⏳ Cancelling job ID: {job_id} ({job_name})\n"
+                # Use the ChainlinkAPI directly to cancel the job
+                if api.cancel_job(job_id):
+                    output += f"✅ Cancelled job ID: {job_id}\n"
+                    successful += 1
+                else:
+                    output += f"❌ Failed to cancel job ID: {job_id}\n"
+                    failed += 1
+            except Exception as e:
+                output += f"❌ Exception when cancelling job {job_id}: {str(e)}\n"
+                failed += 1
         
         # Show results
         output += f"\n{'='*60}\n"

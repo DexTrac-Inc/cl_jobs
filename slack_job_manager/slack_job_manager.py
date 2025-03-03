@@ -1111,24 +1111,19 @@ def handle_direct_job_reapprove(addresses, node, service, say):
         output += f"{'Spec ID':<15} {'Name':<30} {'Status':<20} {'Feeds Manager':<15}\n"
         output += "-" * 80 + "\n"
         
-        for spec_id, job_name in all_jobs_to_reapprove:
+        for job in all_jobs_to_reapprove:
+            spec_id = job['spec_id']
+            job_name = job['name']
+            status = job['status']
+            
             # Truncate long job names
             if len(job_name) > 27:
                 job_name = job_name[:24] + "..."
                 
-            # Get status from the job (need to find the job again)
-            status = "CANCELLED"  # Default assumption
-            
             # Get feeds manager name
-            fm_name = "N/A"
-            for fm in feeds_managers:
-                # Look for job by name
-                for fm_job in api.fetch_jobs(fm["id"]):
-                    if fm_job.get("name") == job_name:
-                        fm_name = fm.get("name", "N/A")
-                        if len(fm_name) > 12:
-                            fm_name = fm_name[:9] + "..."
-                        break
+            fm_name = job.get('feeds_manager', 'N/A')
+            if len(fm_name) > 12:
+                fm_name = fm_name[:9] + "..."
                     
             output += f"{spec_id:<15} {job_name:<30} {status:<20} {fm_name:<15}\n"
             

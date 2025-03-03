@@ -245,7 +245,7 @@ def handle_message(message, say):
     # Check for specific patterns first
     
     # Cancel/reapprove jobs with multiple addresses
-    cancel_reapprove_match = re.search(r'(cancel|reapprove)\s+jobs\s+((?:0x[a-fA-F0-9]{40}(?:\s+|,\s*)?)+)(?:on\s+(\w+)\s+(\w+))?', text, re.IGNORECASE)
+    cancel_reapprove_match = re.search(r'(cancel|reapprove|delete)\s+jobs\s+((?:0x[a-fA-F0-9]{40}(?:\s+|,\s*)?)+)(?:on\s+(\w+)\s+(\w+))?', text, re.IGNORECASE)
     if cancel_reapprove_match:
         action = cancel_reapprove_match.group(1).lower()
         addresses_str = cancel_reapprove_match.group(2)
@@ -267,7 +267,8 @@ def handle_message(message, say):
                 say(f"❌ Please specify node and service (e.g., '{action} jobs {addresses[0]} on tron ocr')")
                 return
         
-        if action == "cancel":
+        # Handle both "cancel" and "delete" as cancellation actions
+        if action == "cancel" or action == "delete":
             handle_direct_job_cancel(addresses, node, service, say)
         else:  # reapprove
             handle_direct_job_reapprove(addresses, node, service, say)

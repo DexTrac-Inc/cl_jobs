@@ -291,15 +291,17 @@ class CommandExecutor:
                             cmd_args.name_pattern = f"contract {address}"
                             logger.info(f"Using custom name pattern for address: {cmd_args.name_pattern}")
                         
-                        # Also set feed_ids to maintain compatibility with the original logic
-                        if "address" in args:
+                        # Set feed_ids from either source
+                        # First check if feed_ids is present (it should have all addresses)
+                        if "feed_ids" in args and isinstance(args["feed_ids"], list):
+                            cmd_args.feed_ids = args["feed_ids"]
+                            logger.info(f"Using {len(cmd_args.feed_ids)} feed IDs for job matching")
+                        # Fallback to address parameter if feed_ids not available
+                        elif "address" in args:
                             cmd_args.feed_ids = [args["address"]]
+                        # Handle single feed_id as string
                         elif "feed_ids" in args:
-                            if isinstance(args["feed_ids"], list):
-                                cmd_args.feed_ids = args["feed_ids"]
-                            else:
-                                # Handle case where feed_ids might be a single string
-                                cmd_args.feed_ids = [args["feed_ids"]]
+                            cmd_args.feed_ids = [args["feed_ids"]]
                     else:
                         cmd_args.feed_ids = None
                     
@@ -348,15 +350,17 @@ class CommandExecutor:
                             cmd_args.name_pattern = f"contract {address}"
                             logger.info(f"Using custom name pattern for address: {cmd_args.name_pattern}")
                         
-                        # Also set feed_ids to maintain compatibility with the original logic
-                        if "address" in args:
+                        # Set feed_ids from either source
+                        # First check if feed_ids is present (it should have all addresses)
+                        if "feed_ids" in args and isinstance(args["feed_ids"], list):
+                            cmd_args.feed_ids = args["feed_ids"]
+                            logger.info(f"Using {len(cmd_args.feed_ids)} feed IDs for job matching")
+                        # Fallback to address parameter if feed_ids not available
+                        elif "address" in args:
                             cmd_args.feed_ids = [args["address"]]
+                        # Handle single feed_id as string
                         elif "feed_ids" in args:
-                            if isinstance(args["feed_ids"], list):
-                                cmd_args.feed_ids = args["feed_ids"]
-                            else:
-                                # Handle case where feed_ids might be a single string
-                                cmd_args.feed_ids = [args["feed_ids"]]
+                            cmd_args.feed_ids = [args["feed_ids"]]
                     else:
                         cmd_args.feed_ids = None
                         

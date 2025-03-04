@@ -77,7 +77,12 @@ def execute(args, chainlink_api=None):
     # Display criteria
     criteria = []
     if feed_ids:
-        criteria.append(f"{len(feed_ids)} feed IDs")
+        if len(feed_ids) <= 3:
+            criteria.append(f"{len(feed_ids)} feed IDs: {', '.join(feed_ids)}")
+        else:
+            # Show the first few feed IDs when there are many
+            feed_list = ', '.join(feed_ids[:3])
+            criteria.append(f"{len(feed_ids)} feed IDs: {feed_list}, ... and {len(feed_ids)-3} more")
     if non_hex_patterns:
         criteria.append(f"{len(non_hex_patterns)} pattern(s): {', '.join(non_hex_patterns)}")
     

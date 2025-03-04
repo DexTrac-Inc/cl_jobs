@@ -98,7 +98,7 @@ def main():
     if not config:
         return 1
     
-    node_url, password_index = config
+    node_url, password_index, node_config = config
     password = os.getenv(f"PASSWORD_{password_index}")
     
     if not password:

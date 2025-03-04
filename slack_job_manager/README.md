@@ -38,13 +38,14 @@ A Slack bot that provides a complete interface to the Chainlink Job Manager thro
 
 2. Create a Slack app at https://api.slack.com/apps
    - Click "Create New App" > "From scratch"
-   - Name your app (e.g., "Chainlink Job Deleter") and select your workspace
+   - Name your app (e.g., "Chainlink Job Manager") and select your workspace
    - Go to "OAuth & Permissions" and add these Bot Token Scopes:
-     - `channels:history`
-     - `chat:write`
-     - `groups:history`
-     - `im:history`
-     - `mpim:history`
+     - `channels:history` - Read message history in public channels
+     - `chat:write` - Send messages as the app
+     - `groups:history` - Read message history in private channels
+     - `im:history` - Read message history in direct messages
+     - `mpim:history` - Read message history in group direct messages
+     - `users:read` - View users in the workspace (needed for detailed logging)
    - Go to "Socket Mode" and enable it (recommended)
      - Click "Enable Socket Mode" and generate an App Token
      - Save this token as SLACK_APP_TOKEN in your .env file
@@ -78,6 +79,25 @@ A Slack bot that provides a complete interface to the Chainlink Job Manager thro
    SLACK_APP_TOKEN="xapp-your-app-token"  # Only for Socket Mode
    SLACK_AUTHORIZED_USERS="U01234567,U89012345"  # Comma-separated Slack user IDs
    PORT=3000  # Only needed if not using Socket Mode
+   ```
+   
+   **Docker Setup Note**
+   
+   If running via Docker, make sure these variables are included in your .env file that's mounted to the container. Also ensure your configuration files are placed correctly:
+   
+   ```bash
+   # Create config directory if it doesn't exist
+   mkdir -p config
+   
+   # Make sure configuration files are in the config directory
+   cp cl_hosts.json config/
+   cp cl_bridges.json config/
+   
+   # Create logs directory if it doesn't exist
+   mkdir -p logs
+   
+   # Make sure the directories are writable by the container
+   chmod 777 logs
    ```
 
    **Option B: Using systemd environment variables**
@@ -148,9 +168,37 @@ delete bridge --service ocr --node bsc --name my-bridge
 help
 ```
 
-### Natural Language Job Deletion
+### Natural Language Commands
 
-For backward compatibility, the bot also understands natural language job deletion requests:
+The bot also supports more conversational natural language commands:
+
+**Listing Jobs**
+```
+list approved jobs on arbitrum ocr
+list jobs on ethereum bootstrap
+```
+
+**Cancelling/Deleting Jobs**
+```
+cancel jobs 0x123abc on ethereum bootstrap
+delete jobs 0x123abc0def456789 on ethereum bootstrap
+```
+
+**Reapproving Jobs**
+```
+reapprove jobs 0x123abc on ethereum bootstrap
+```
+
+**Bridge Management**
+```
+list bridges on arbitrum ocr
+delete bridge my-bridge-name on arbitrum ocr
+create bridge on arbitrum ocr with name my-new-bridge and url https://example.com
+```
+
+### Legacy Natural Language Job Deletion
+
+For backward compatibility, the bot also understands the original style of natural language job deletion requests:
 
 1. In a Slack channel where the bot is present, post a message in this format:
    ```
@@ -194,16 +242,26 @@ To find a user's ID in Slack:
 
 Logs are written to:
 - Console output
-- `chainlink_slack_deleter.log` in the main directory
+- `chainlink_slack_manager.log` in the main directory (or in logs/ when running in Docker)
 - System journal (via syslog) with identifier `slack_job_manager`
+
+The logs now include detailed information about:
+- Which user initiated each command
+- Command parameters and arguments
+- Execution timing information
+- Success/failure status of operations
+- Error details with context
 
 To check the logs:
 ```bash
 # View service logs
 sudo journalctl -u slack_job_manager
 
-# View log file (replace with your actual path)
-cat <path_to_cl_jobs>/chainlink_slack_deleter.log
+# View log file (standalone mode)
+cat <path_to_cl_jobs>/chainlink_slack_manager.log
+
+# View log file (Docker mode)
+cat <path_to_cl_jobs>/logs/chainlink_slack_manager.log
 ```
 
 ## Troubleshooting
@@ -217,11 +275,26 @@ cat <path_to_cl_jobs>/chainlink_slack_deleter.log
    - Verify user IDs are correct in `.env`
    - Remember that user IDs begin with "U" followed by alphanumeric characters
 
-3. **No matching jobs found**
+3. **Missing user information in logs**
+   - Check if you've added the `users:read` permission to your Slack app
+   - Look for "missing_scope" errors in the logs
+   - If found, update your Slack app permissions and reinstall it to your workspace
+
+4. **No matching jobs found**
    - Verify the contract address is correct
    - Check that the network name matches a configured node
 
-4. **Service won't start**
+5. **Configuration not found errors**
+   - Ensure cl_hosts.json and cl_bridges.json are in the correct location
+   - For Docker mode, they should be in the `config/` directory
+   - For standalone mode, they can be in the root directory
+
+6. **Service won't start**
    - Check logs with `journalctl -u slack_job_manager`
    - Verify all environment variables are set correctly
    - Make sure the paths in the service file are correct
+
+7. **Docker logs not appearing**
+   - Check that the logs directory is mounted correctly in docker-compose.yml
+   - Make sure the container has write permissions to the logs directory
+   - Restart the container after making changes

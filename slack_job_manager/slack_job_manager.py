@@ -25,7 +25,14 @@ from command_parser import SlackCommandParser
 from command_executor import CommandExecutor
 
 # Configure logging
-logger = setup_logging("ChainlinkJobManager.slack", "chainlink_slack_manager.log")
+# Check if we're running in Docker to set the proper log path
+docker_mode = os.environ.get('DOCKER_CONTAINER', '').lower() == 'true' or os.path.exists('/.dockerenv')
+if docker_mode:
+    log_path = "logs/chainlink_slack_manager.log"
+else:
+    log_path = "chainlink_slack_manager.log"
+    
+logger = setup_logging("ChainlinkJobManager.slack", log_path)
 
 # Initialize Slack app
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
@@ -70,7 +77,14 @@ class LegacyJobDeleter:
     """
     
     def __init__(self):
-        self.config = load_node_config()
+        # Check for config in mounted config directory first
+        docker_config_path = os.path.join("config", "cl_hosts.json")
+        if os.path.exists(docker_config_path):
+            self.config = load_node_config(docker_config_path)
+            logger.info(f"Using Docker mounted config: {docker_config_path}")
+        else:
+            self.config = load_node_config()
+            
         self.email = os.environ.get("EMAIL")
         self.passwords = {
             i: os.environ.get(f"PASSWORD_{i}") 
@@ -361,7 +375,14 @@ def handle_message(message, say):
                         service = args["service"]
                         
                         # Load configuration
-                        config = load_node_config()
+                        # Check for config in mounted config directory first
+                        docker_config_path = os.path.join("config", "cl_hosts.json")
+                        if os.path.exists(docker_config_path):
+                            config = load_node_config(docker_config_path)
+                            logger.info(f"Using Docker mounted config: {docker_config_path}")
+                        else:
+                            config = load_node_config()
+                            
                         if not config or "services" not in config or service not in config["services"] or node not in config["services"][service]:
                             say(f"❌ Configuration not found for {service}/{node}")
                             return
@@ -770,7 +791,14 @@ def get_chainlink_api(node, service, say):
     """Initialize ChainlinkAPI for the specified node and service"""
     try:
         # Load configuration
-        config = load_node_config()
+        # Check for config in mounted config directory first
+        docker_config_path = os.path.join("config", "cl_hosts.json")
+        if os.path.exists(docker_config_path):
+            config = load_node_config(docker_config_path)
+            logger.info(f"Using Docker mounted config: {docker_config_path}")
+        else:
+            config = load_node_config()
+            
         if not config or "services" not in config or service not in config["services"] or node not in config["services"][service]:
             say(f"❌ Configuration not found for {service}/{node}")
             return None

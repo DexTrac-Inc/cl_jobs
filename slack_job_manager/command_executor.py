@@ -28,7 +28,14 @@ class CommandExecutor:
     """Execute job manager commands from parsed arguments"""
     
     def __init__(self):
-        self.config = load_node_config()
+        # Check for config in mounted config directory first
+        docker_config_path = os.path.join("config", "cl_hosts.json")
+        if os.path.exists(docker_config_path):
+            self.config = load_node_config(docker_config_path)
+            logger.info(f"Using Docker mounted config: {docker_config_path}")
+        else:
+            self.config = load_node_config()
+            
         self.email = os.environ.get("EMAIL")
         self.passwords = {
             i: os.environ.get(f"PASSWORD_{i}") 
@@ -382,8 +389,20 @@ class CommandExecutor:
                     cmd_args = Args()
                     cmd_args.service = args["service"]
                     cmd_args.node = args["node"]
-                    cmd_args.config = "cl_hosts.json"  # Default config file
-                    cmd_args.bridges_config = "cl_bridges.json"  # Default bridges config
+                    
+                    # Check for config in mounted config directory first
+                    docker_hosts_config = os.path.join("config", "cl_hosts.json")
+                    if os.path.exists(docker_hosts_config):
+                        cmd_args.config = docker_hosts_config
+                    else:
+                        cmd_args.config = "cl_hosts.json"  # Default config file
+                        
+                    # Check for bridges config in mounted config directory first
+                    docker_bridges_config = os.path.join("config", "cl_bridges.json")
+                    if os.path.exists(docker_bridges_config):
+                        cmd_args.bridges_config = docker_bridges_config
+                    else:
+                        cmd_args.bridges_config = "cl_bridges.json"  # Default bridges config
                     
                     # Process based on command type
                     if command == "bridge_create":

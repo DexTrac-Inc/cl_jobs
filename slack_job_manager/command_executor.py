@@ -134,7 +134,9 @@ class CommandExecutor:
         Returns:
             Tuple of (success, message)
         """
-        print(f"DEBUG: Executing command: {command} with args: {args}")
+        # Always log commands with detailed arguments
+        logger.info(f"Executing command: {command}")
+        logger.info(f"Command arguments: {json.dumps(args, default=str)}")
         
         # EMERGENCY FIX FOR BRIDGE_LIST: Completely bypass normal command execution for bridge_list
         if command == "bridge_list":

@@ -248,10 +248,27 @@ def handle_message(message, say):
     text = message.get("text", "")
     user_id = message.get("user")
     
+    # Get user info for more detailed logging
+    user_name = "Unknown"
+    try:
+        # Use user ID from message and get profile info if available
+        if user_id and 'client' in dir(app) and app.client:
+            user_info = app.client.users_info(user=user_id)
+            if user_info and user_info.get('ok') and user_info.get('user'):
+                user_profile = user_info.get('user')
+                user_name = user_profile.get('real_name', user_profile.get('name', 'Unknown'))
+    except Exception as e:
+        logger.warning(f"Failed to get user info for {user_id}: {str(e)}")
+    
+    # Log all incoming messages that look like commands
+    if any(pattern in text.lower() for pattern in ["job", "bridge", "chainlink", "cancel", "list", "approve", "help"]):
+        logger.info(f"Received message from user {user_name} [{user_id}]: {text}")
+    
     # Check if user is authorized first
     if not validate_user(user_id):
         # Only respond if the message looks like a command
         if any(pattern in text.lower() for pattern in ["job", "bridge", "chainlink", "help"]):
+            logger.warning(f"Unauthorized access attempt by {user_name} [{user_id}]")
             say("❌ You are not authorized to use Chainlink commands. Please contact an administrator.")
         return
     
@@ -269,7 +286,7 @@ def handle_message(message, say):
         # Extract multiple addresses from the string
         # This handles both space-separated and comma-separated formats
         addresses = re.findall(r'0x[a-fA-F0-9]{40}', addresses_str)
-        logger.info(f"Detected {action} command with {len(addresses)} addresses: {addresses}")
+        logger.info(f"User {user_name} [{user_id}] - Detected {action} command with {len(addresses)} addresses: {addresses}")
         
         if not node or not service:
             # Try to find the network and service in the rest of the text
@@ -291,10 +308,11 @@ def handle_message(message, say):
     # List jobs command with optional status filter
     list_jobs_match = re.search(r'list\s+(?:(\w+)\s+)?jobs\s+on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
     if list_jobs_match:
-        logger.info(f"Detected natural language job list command directly")
+        logger.info(f"User {user_name} [{user_id}] - Detected natural language job list command")
         status_filter = list_jobs_match.group(1)
         node = list_jobs_match.group(2)
         service = list_jobs_match.group(3)
+        logger.info(f"Parameters: node={node}, service={service}, status_filter={status_filter if status_filter else 'None'}")
         
         # Convert common status words to API values
         if status_filter:
@@ -311,28 +329,31 @@ def handle_message(message, say):
     # List bridges command
     list_bridges_match = re.search(r'list\s+bridges\s+on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
     if list_bridges_match:
-        logger.info(f"Detected natural language bridge list command directly")
+        logger.info(f"User {user_name} [{user_id}] - Detected natural language bridge list command")
         node = list_bridges_match.group(1)
         service = list_bridges_match.group(2)
+        logger.info(f"Parameters: node={node}, service={service}")
         handle_direct_bridge_list(node, service, say)
         return
         
     delete_bridge_match = re.search(r'delete\s+bridge\s+([a-zA-Z0-9_-]+)\s+on\s+(\w+)\s+(\w+)', text, re.IGNORECASE)
     if delete_bridge_match:
-        logger.info(f"Detected natural language bridge delete command directly")
+        logger.info(f"User {user_name} [{user_id}] - Detected natural language bridge delete command")
         bridge_name = delete_bridge_match.group(1)
         node = delete_bridge_match.group(2)
         service = delete_bridge_match.group(3)
+        logger.info(f"Parameters: bridge_name={bridge_name}, node={node}, service={service}")
         handle_direct_bridge_delete(bridge_name, node, service, say)
         return
         
     create_bridge_match = re.search(r'create\s+bridge\s+on\s+(\w+)\s+(\w+)\s+with\s+name\s+([a-zA-Z0-9_-]+)\s+and\s+url\s+<?([^>\s]+)>?', text, re.IGNORECASE)
     if create_bridge_match:
-        logger.info(f"Detected natural language bridge create command directly")
+        logger.info(f"User {user_name} [{user_id}] - Detected natural language bridge create command")
         node = create_bridge_match.group(1)
         service = create_bridge_match.group(2)
         bridge_name = create_bridge_match.group(3)
         bridge_url = create_bridge_match.group(4)
+        logger.info(f"Parameters: bridge_name={bridge_name}, bridge_url={bridge_url}, node={node}, service={service}")
         
         # Clean URL
         if bridge_url.startswith('<') and bridge_url.endswith('>'):
@@ -348,10 +369,13 @@ def handle_message(message, say):
     
     if command:
         # It's a structured command, parse arguments and execute
+        logger.info(f"User {user_name} [{user_id}] - Detected structured command: {command}")
         args = command_parser.parse_arguments(command, text)
+        logger.info(f"Parsed arguments: {args}")
         
         if command == "help":
             # Special case for help command
+            logger.info(f"User {user_name} [{user_id}] - Executing help command")
             help_text = command_parser.get_help_text()
             say(help_text)
             return
@@ -646,14 +670,17 @@ def handle_message(message, say):
                     say(f"❌ Error deleting bridge: {str(e)}")
                     return
         
-        # DEBUGGING
-        logger.info(f"About to execute command: {command} with args: {args}")
+        # Log start of command execution with detailed info
+        logger.info(f"User {user_name} [{user_id}] - About to execute command: {command}")
         
-        # Execute the command
+        # Execute the command with timing
+        start_time = time.time()
         success, message_text = command_executor.execute_command(command, args)
+        execution_time = time.time() - start_time
         
-        # DEBUGGING
-        logger.info(f"Command execution result: success={success}, message_length={len(message_text) if message_text else 0}")
+        # Log completion with detailed results
+        result_status = "SUCCESS" if success else "FAILED"
+        logger.info(f"User {user_name} [{user_id}] - Command execution completed: command={command}, status={result_status}, execution_time={execution_time:.2f}s, message_length={len(message_text) if message_text else 0}")
         
         say(message_text)
         return
@@ -664,12 +691,20 @@ def handle_message(message, say):
         # Not a recognized command, ignore
         return
     
+    # Log that we detected a legacy job deletion request
+    logger.info(f"User {user_name} [{user_id}] - Detected legacy job deletion request")
+    logger.info(f"Legacy deletion details: network={parsed_request.get('network')}, contract={parsed_request.get('contract_address')}")
+    
     # Process the legacy deletion request (dry run)
     results = legacy_deleter.process_deletion_request(parsed_request, user_id)
     
+    # Log the results
     if not results["success"]:
+        logger.warning(f"User {user_name} [{user_id}] - Legacy deletion request failed: {results['message']}")
         say(results["message"])
         return
+    else:
+        logger.info(f"User {user_name} [{user_id}] - Legacy deletion dry-run successful, found {len(results.get('jobs', []))} jobs to cancel")
     
     # Ask for confirmation with button for legacy deletion
     say({
@@ -739,7 +774,23 @@ def handle_deletion_confirmation(ack, body, say):
     ack()
     
     user_id = body["user"]["id"]
+    
+    # Get user info for more detailed logging
+    user_name = "Unknown"
+    try:
+        # Use user ID from message and get profile info if available
+        if user_id and 'client' in dir(app) and app.client:
+            user_info = app.client.users_info(user=user_id)
+            if user_info and user_info.get('ok') and user_info.get('user'):
+                user_profile = user_info.get('user')
+                user_name = user_profile.get('real_name', user_profile.get('name', 'Unknown'))
+    except Exception as e:
+        logger.warning(f"Failed to get user info for {user_id}: {str(e)}")
+    
+    logger.info(f"User {user_name} [{user_id}] - Confirmed job deletion")
+    
     if not validate_user(user_id):
+        logger.warning(f"Unauthorized deletion attempt by {user_name} [{user_id}]")
         say("❌ You are not authorized to delete jobs. Please contact an administrator.")
         return
     
@@ -770,8 +821,17 @@ def handle_deletion_confirmation(ack, body, say):
             say("❌ Failed to authenticate with node for deletion. Please try again.")
             return
             
-        # Execute the deletion
+        # Log before execution
+        logger.info(f"User {user_name} [{user_id}] - Executing job deletion for {len(jobs_to_cancel)} jobs on {service}/{node}")
+        
+        # Execute the deletion with timing
+        start_time = time.time()
         results = legacy_deleter.execute_deletion(api, jobs_to_cancel)
+        execution_time = time.time() - start_time
+        
+        # Log after execution
+        result_status = "SUCCESS" if results.get('success', False) else "PARTIAL/FAILED"
+        logger.info(f"User {user_name} [{user_id}] - Job deletion completed in {execution_time:.2f}s, status={result_status}")
         say(results["message"])
         
     except Exception as e:
@@ -780,9 +840,23 @@ def handle_deletion_confirmation(ack, body, say):
 
 
 @app.action("cancel_deletion")
-def handle_deletion_cancellation(ack, say):
+def handle_deletion_cancellation(ack, body, say):
     """Handle cancellation of job deletion"""
     ack()
+    
+    # Get user info for logging
+    user_id = body["user"]["id"]
+    user_name = "Unknown"
+    try:
+        if user_id and 'client' in dir(app) and app.client:
+            user_info = app.client.users_info(user=user_id)
+            if user_info and user_info.get('ok') and user_info.get('user'):
+                user_profile = user_info.get('user')
+                user_name = user_profile.get('real_name', user_profile.get('name', 'Unknown'))
+    except Exception as e:
+        logger.warning(f"Failed to get user info for {user_id}: {str(e)}")
+    
+    logger.info(f"User {user_name} [{user_id}] - Cancelled job deletion")
     say("✅ Job deletion cancelled.")
 
 
@@ -835,9 +909,13 @@ def get_chainlink_api(node, service, say):
 def handle_direct_bridge_list(node, service, say):
     """Handle direct bridge list command"""
     try:
+        logger.info(f"Starting direct bridge list handler: node={node}, service={service}")
+        start_time = time.time()
+        
         # Initialize API
         api = get_chainlink_api(node, service, say)
         if not api:
+            logger.warning(f"Failed to initialize API for bridge list: node={node}, service={service}")
             return
             
         # Start with detailed log output
@@ -912,8 +990,13 @@ def handle_direct_bridge_list(node, service, say):
                 say(f"```\n{chunk_header}{chunk}\n```")
             else:
                 say(f"```\n{chunk}\n```")
+                
+        # Log completion
+        execution_time = time.time() - start_time
+        logger.info(f"Bridge list completed: node={node}, service={service}, found={len(bridges)}, execution_time={execution_time:.2f}s")
     except Exception as e:
-        logger.exception(f"Error listing bridges: {e}")
+        execution_time = time.time() - start_time
+        logger.exception(f"Error listing bridges: node={node}, service={service}, error=\"{str(e)}\", execution_time={execution_time:.2f}s")
         say(f"❌ Error listing bridges: {str(e)}")
 
 def handle_direct_bridge_delete(bridge_name, node, service, say):
